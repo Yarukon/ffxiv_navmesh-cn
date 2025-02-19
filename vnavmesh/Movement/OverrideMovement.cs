@@ -130,6 +130,5 @@ public unsafe class OverrideMovement : IDisposable
     private void UpdateLegacyMode()
     {
         _legacyMode = Service.GameConfig.UiControl.TryGetUInt("MoveMode", out var mode) && mode == 1;
-        Service.Log.Info($"传统模式现在 {(_legacyMode ? "启用" : "禁用")}");
     }
 }
