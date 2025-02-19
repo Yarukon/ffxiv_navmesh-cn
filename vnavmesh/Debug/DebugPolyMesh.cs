@@ -31,14 +31,14 @@ public class DebugPolyMesh : DebugRecast
 
     public void Draw()
     {
-        using var nr = _tree.Node("Poly mesh");
+        using var nr = _tree.Node("多边形网格");
         if (!nr.Opened)
             return;
 
         DrawBaseInfo(_tree, _mesh.bmin, _mesh.bmax, _mesh.cs, _mesh.ch);
-        _tree.LeafNode($"Misc: border size={_mesh.borderSize}, max edge error={_mesh.maxEdgeError}, max vertices/poly={_mesh.nvp}");
+        _tree.LeafNode($"杂项: 边界大小={_mesh.borderSize}, 最大边缘误差={_mesh.maxEdgeError}, 每个多边形最大顶点数={_mesh.nvp}");
 
-        using (var nv = _tree.Node($"Vertices ({_mesh.nverts})###verts"))
+        using (var nv = _tree.Node($"顶点 ({_mesh.nverts})###verts"))
         {
             if (nv.Opened)
             {
@@ -50,7 +50,7 @@ public class DebugPolyMesh : DebugRecast
             }
         }
 
-        using (var np = _tree.Node($"Polygons ({_mesh.npolys})###polys"))
+        using (var np = _tree.Node($"多边形 ({_mesh.npolys})###polys"))
         {
             if (np.SelectedOrHovered)
             {
@@ -70,13 +70,13 @@ public class DebugPolyMesh : DebugRecast
                     {
                         var vertex = _mesh.polys[off + j];
                         if (vertex != RcConstants.RC_MESH_NULL_IDX)
-                            if (_tree.LeafNode($"Vertex {j}: #{vertex} = {_mesh.verts[3 * vertex]}x{_mesh.verts[3 * vertex + 1]}x{_mesh.verts[3 * vertex + 2]}").SelectedOrHovered && vertex != RcConstants.RC_MESH_NULL_IDX)
+                            if (_tree.LeafNode($"顶点 {j}: #{vertex} = {_mesh.verts[3 * vertex]}x{_mesh.verts[3 * vertex + 1]}x{_mesh.verts[3 * vertex + 2]}").SelectedOrHovered && vertex != RcConstants.RC_MESH_NULL_IDX)
                                 VisualizeVertex(vertex);
                     }
                     for (int j = 0; j < _mesh.nvp; ++j)
                     {
                         var adj = _mesh.polys[off + _mesh.nvp + j];
-                        if (_tree.LeafNode($"Adjacency {j}: {adj}").SelectedOrHovered && adj != RcConstants.RC_MESH_NULL_IDX)
+                        if (_tree.LeafNode($"邻接 {j}: {adj}").SelectedOrHovered && adj != RcConstants.RC_MESH_NULL_IDX)
                             VisualizePolygon(adj);
                     }
                 }
@@ -116,7 +116,7 @@ public class DebugPolyMesh : DebugRecast
                 builder.AddMesh(0, startingPrimitive, numTriangles, _mesh.areas[i] == 0 ? 0 : 1, 1);
                 startingPrimitive += primsPerPoly;
             }
-            Service.Log.Debug($"polymesh visualization build time: {timer.Value().TotalMilliseconds:f3}ms");
+            Service.Log.Debug($"多边形网格可视化构建时间: {timer.Value().TotalMilliseconds:f3}ms");
         }
         return _visu;
     }

@@ -17,7 +17,7 @@ public class Voxelizer
     public Voxelizer(int nx, int ny, int nz, bool partial = false)
     {
         if (!BitOperations.IsPow2(nx) || !BitOperations.IsPow2(ny) || !BitOperations.IsPow2(nz))
-            throw new Exception($"Non-power-of-two size not supported: {nx}x{ny}x{nz}");
+            throw new Exception($"不支持非二进制大小: {nx}x{ny}x{nz}");
         NumX = nx;
         NumY = ny;
         NumZ = nz;

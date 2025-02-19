@@ -153,7 +153,7 @@ public unsafe class DebugLayout : IDisposable
         //DrawLayout("u28", w->UnkLayout28);
         //DrawLayout("u30", w->UnkLayout30);
 
-        using (var n = _tree.Node($"Loaded layouts: {w->LoadedLayouts.Count}###loaded", w->LoadedLayouts.Count == 0))
+        using (var n = _tree.Node($"已加载层级: {w->LoadedLayouts.Count}###loaded", w->LoadedLayouts.Count == 0))
         {
             if (n.Opened)
             {

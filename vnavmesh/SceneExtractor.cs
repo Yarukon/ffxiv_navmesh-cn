@@ -216,7 +216,7 @@ public class SceneExtractor
     {
         var scale = world.Row0.Length(); // note: a lot of code assumes it's uniform...
         if (Math.Abs(scale - world.Row1.Length()) > 0.1 || Math.Abs(scale - world.Row2.Length()) > 0.1)
-            Service.Log.Error($"Sphere {id:X} has non-uniform scale");
+            Service.Log.Error($"球体 {id:X} 的比例不均匀");
         var vscale = new Vector3(scale);
         return new AABB() { Min = world.Row3 - vscale, Max = world.Row3 + vscale };
     }

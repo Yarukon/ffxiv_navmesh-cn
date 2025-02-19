@@ -50,7 +50,7 @@ public class DebugDetourNavmesh : DebugRecast
 
     private void DrawMesh()
     {
-        using var nr = _tree.Node("Detour navmesh");
+        using var nr = _tree.Node("迂回导航");
         if (!nr.Opened)
             return;
 

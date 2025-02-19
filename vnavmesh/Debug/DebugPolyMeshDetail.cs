@@ -26,12 +26,12 @@ public class DebugPolyMeshDetail : DebugRecast
 
     public void Draw()
     {
-        using var nr = _tree.Node("Detail poly mesh");
+        using var nr = _tree.Node("细节多边形网格");
         if (!nr.Opened)
             return;
 
-        _tree.LeafNode($"Total size: {_mesh.nverts} vertices, {_mesh.ntris} triangles");
-        using var nm = _tree.Node($"Meshes ({_mesh.nmeshes})###meshes");
+        _tree.LeafNode($"总大小: {_mesh.nverts} 顶点, {_mesh.ntris} 三角形");
+        using var nm = _tree.Node($"网格 ({_mesh.nmeshes})###meshes");
         if (nm.SelectedOrHovered)
             Visualize();
         if (!nm.Opened)
@@ -43,7 +43,7 @@ public class DebugPolyMeshDetail : DebugRecast
             var vertexCount = _mesh.meshes[i * 4 + 1];
             var triBase = _mesh.meshes[i * 4 + 2];
             var triCount = _mesh.meshes[i * 4 + 3];
-            using var nmesh = _tree.Node($"Mesh {i}: {vertexCount} vertices starting at {vertexBase}, {triCount} triangles starting at {triBase}");
+            using var nmesh = _tree.Node($"网格 {i}: {vertexCount} 顶点从 {vertexBase} 开始, {triCount} 三角形从 {triBase} 开始");
             if (nmesh.SelectedOrHovered)
                 VisualizeMesh(i);
             if (!nmesh.Opened)
@@ -55,7 +55,7 @@ public class DebugPolyMeshDetail : DebugRecast
                 var v2 = _mesh.tris[(triBase + j) * 4 + 1];
                 var v3 = _mesh.tris[(triBase + j) * 4 + 2];
                 var flags = _mesh.tris[(triBase + j) * 4 + 3];
-                using var ntri = _tree.Node($"Triangle {j}: {v1}x{v2}x{v3} ({GetVertex(vertexBase + v1):f3}x{GetVertex(vertexBase + v2):f3}x{GetVertex(vertexBase + v3):f3}), flags={flags:X}");
+                using var ntri = _tree.Node($"三角形 {j}: {v1}x{v2}x{v3} ({GetVertex(vertexBase + v1):f3}x{GetVertex(vertexBase + v2):f3}x{GetVertex(vertexBase + v3):f3}), 标志={flags:X}");
                 if (ntri.SelectedOrHovered)
                     VisualizeTriangle(triBase + j, vertexBase, 3, 3);
             }
@@ -79,7 +79,7 @@ public class DebugPolyMeshDetail : DebugRecast
                 builder.AddInstance(new(Matrix4x3.Identity, IntColor(i, 0.75f)));
                 builder.AddMesh(_mesh.meshes[i * 4], _mesh.meshes[i * 4 + 2], _mesh.meshes[i * 4 + 3], i, 1);
             }
-            Service.Log.Debug($"detail polymesh visualization build time: {timer.Value().TotalMilliseconds:f3}ms");
+            Service.Log.Debug($"细节多边形网格可视化构建时间: {timer.Value().TotalMilliseconds:f3}毫秒");
         }
         return _visu;
     }

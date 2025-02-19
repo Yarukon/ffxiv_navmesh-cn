@@ -68,8 +68,8 @@ public unsafe class OverrideMovement : IDisposable
         _rmiWalkIsInputEnabled2 = Marshal.GetDelegateForFunctionPointer<RMIWalkIsInputEnabled>(rmiWalkIsInputEnabled2Addr);
 
         Service.Hook.InitializeFromAttributes(this);
-        Service.Log.Information($"RMIWalk address: 0x{_rmiWalkHook.Address:X}");
-        Service.Log.Information($"RMIFly address: 0x{_rmiFlyHook.Address:X}");
+        Service.Log.Information($"RMIWalk 地址: 0x{_rmiWalkHook.Address:X}");
+        Service.Log.Information($"RMIFly 地址: 0x{_rmiFlyHook.Address:X}");
         Service.GameConfig.UiControlChanged += OnConfigChanged;
         UpdateLegacyMode();
     }
@@ -130,6 +130,6 @@ public unsafe class OverrideMovement : IDisposable
     private void UpdateLegacyMode()
     {
         _legacyMode = Service.GameConfig.UiControl.TryGetUInt("MoveMode", out var mode) && mode == 1;
-        Service.Log.Info($"Legacy mode is now {(_legacyMode ? "enabled" : "disabled")}");
+        Service.Log.Info($"传统模式现在 {(_legacyMode ? "启用" : "禁用")}");
     }
 }

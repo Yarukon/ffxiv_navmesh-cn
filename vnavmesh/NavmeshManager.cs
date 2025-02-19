@@ -1,4 +1,4 @@
-﻿using FFXIVClientStructs.FFXIV.Client.LayoutEngine;
+using FFXIVClientStructs.FFXIV.Client.LayoutEngine;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -59,7 +59,8 @@ public sealed class NavmeshManager : IDisposable
                     return; // nothing is loaded, and auto-load is forbidden
                 curKey = ""; // just unload existing mesh
             }
-            Log($"Starting transition from '{CurrentKey}' to '{curKey}'");
+            
+            Log($"开始由 '{CurrentKey}' 转换至 '{curKey}'");
             CurrentKey = curKey;
             Reload(true);
             // mesh load is now in progress
@@ -93,7 +94,7 @@ public sealed class NavmeshManager : IDisposable
     public Task<List<Vector3>> QueryPath(Vector3 from, Vector3 to, bool flying, CancellationToken externalCancel = default)
     {
         if (_currentCTS == null)
-            throw new Exception($"Can't initiate query - navmesh is not loaded");
+            throw new Exception($"无法开始查询, 导航数据仍在构建过程中Can't initiate query - navmesh is not loaded");
 
         // task can be cancelled either by internal request (i.e. when navmesh is reloaded) or external
         var combined = CancellationTokenSource.CreateLinkedTokenSource(_currentCTS.Token, externalCancel);
@@ -203,14 +204,14 @@ public sealed class NavmeshManager : IDisposable
         {
             try
             {
-                Log($"Loading cache: {cache.FullName}");
+                Log($"加载缓存: {cache.FullName}");
                 using var stream = cache.OpenRead();
                 using var reader = new BinaryReader(stream);
                 return Navmesh.Deserialize(reader, customization.Version);
             }
             catch (Exception ex)
             {
-                Log($"Failed to load cache: {ex}");
+                Log($"加载缓存失败: {ex}");
             }
         }
         cancel.ThrowIfCancellationRequested();
@@ -231,7 +232,7 @@ public sealed class NavmeshManager : IDisposable
 
         // write results to cache
         {
-            Service.Log.Debug($"Writing cache: {cache.FullName}");
+            Service.Log.Debug($"写入缓存: {cache.FullName}");
             using var stream = cache.Open(FileMode.Create, FileAccess.Write, FileShare.None);
             using var writer = new BinaryWriter(stream);
             builder.Navmesh.Serialize(writer);

@@ -53,14 +53,14 @@ public class DebugSolidHeightfield : DebugRecast
 
     public void Draw()
     {
-        using var nr = _tree.Node("Solid heightfield");
+        using var nr = _tree.Node("实心高度场");
         if (!nr.Opened)
             return;
 
         DrawBaseInfo(_tree, _hf.width, _hf.height, _hf.bmin, _hf.bmax, _hf.cs, _hf.ch);
-        _tree.LeafNode($"Border size: {_hf.borderSize}");
+        _tree.LeafNode($"边界大小: {_hf.borderSize}");
 
-        using var nc = _tree.Node("Cells");
+        using var nc = _tree.Node("单元格");
         if (nc.SelectedOrHovered)
             Visualize();
         if (!nc.Opened)
@@ -134,7 +134,7 @@ public class DebugSolidHeightfield : DebugRecast
                 }
                 world.M43 += _hf.cs;
             }
-            Service.Log.Debug($"hf visualization build time: {timer.Value().TotalMilliseconds:f3}ms");
+            Service.Log.Debug($"高度场可视化构建时间: {timer.Value().TotalMilliseconds:f3}毫秒");
         }
         return _visu;
     }

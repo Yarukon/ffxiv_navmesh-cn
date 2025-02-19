@@ -46,7 +46,7 @@ public unsafe class OverrideCamera : IDisposable
     public OverrideCamera()
     {
         Service.Hook.InitializeFromAttributes(this);
-        Service.Log.Information($"RMICamera address: 0x{_rmiCameraHook.Address:X}");
+        Service.Log.Information($"RMICamera 地址: 0x{_rmiCameraHook.Address:X}");
     }
 
     public void Dispose()

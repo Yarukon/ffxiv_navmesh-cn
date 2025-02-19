@@ -67,10 +67,10 @@ class DebugNavmeshCustom : IDisposable
         public void Rebuild(Customization settings, bool includeTiles)
         {
             Clear();
-            Service.Log.Debug("[navmesh] extract from scene");
+            Service.Log.Debug("[navmesh] 已从场景解压");
             _scene = new();
             _scene.FillFromActiveLayout();
-            Service.Log.Debug("[navmesh] schedule async build");
+            Service.Log.Debug("[navmesh] 已排队异步构建任务");
             _task = Task.Run(() => BuildNavmesh(_scene, settings, includeTiles));
         }
 
@@ -113,11 +113,11 @@ class DebugNavmeshCustom : IDisposable
                 }
 
                 _query = new(_builder.Navmesh);
-                Service.Log.Debug($"navmesh build time: {timer.Value().TotalMilliseconds}ms");
+                Service.Log.Debug($"构建时间: {timer.Value().TotalMilliseconds}ms");
             }
             catch (Exception ex)
             {
-                Service.Log.Error($"Error building navmesh: {ex}");
+                Service.Log.Error($"构建失败: {ex}");
                 throw;
             }
         }
@@ -172,30 +172,30 @@ class DebugNavmeshCustom : IDisposable
 
     public void Draw()
     {
-        using (var nsettings = _tree.Node("Navmesh properties"))
+        using (var nsettings = _tree.Node("导航属性"))
         {
             if (nsettings.Opened)
             {
-                ImGui.Checkbox("Support flying", ref _settings.Flyable);
+                ImGui.Checkbox("支持飞行", ref _settings.Flyable);
                 _settings.Settings.Draw();
             }
         }
 
         using (var d = ImRaii.Disabled(_navmesh.CurrentState == AsyncBuilder.State.InProgress))
         {
-            if (ImGui.Button("Rebuild navmesh"))
+            if (ImGui.Button("重构"))
             {
                 Clear();
                 _navmesh.Rebuild(_settings, true);
             }
             ImGui.SameLine();
-            if (ImGui.Button("Rebuild scene extract only"))
+            if (ImGui.Button("仅重构场景提取"))
             {
                 Clear();
                 _navmesh.Rebuild(_settings, false);
             }
             ImGui.SameLine();
-            ImGui.TextUnformatted($"State: {_navmesh.CurrentState}");
+            ImGui.TextUnformatted($"状态: {_navmesh.CurrentState}");
         }
 
         if (_navmesh.CurrentState != AsyncBuilder.State.Ready)
@@ -203,25 +203,25 @@ class DebugNavmeshCustom : IDisposable
 
         var navmesh = _navmesh.Navmesh!;
         navmesh.CalcTileLoc((Service.ClientState.LocalPlayer?.Position ?? default).SystemToRecast(), out var playerTileX, out var playerTileZ);
-        _tree.LeafNode($"Player tile: {playerTileX}x{playerTileZ}");
+        _tree.LeafNode($"玩家区域: {playerTileX}x{playerTileZ}");
 
         _drawExtracted ??= new(_navmesh.Scene!, _navmesh.Extractor!, _tree, _dd, _coll);
         _drawExtracted.Draw();
         var intermediates = _navmesh.Intermediates;
         if (intermediates != null)
         {
-            using var n = _tree.Node("Intermediates");
+            using var n = _tree.Node("中间");
             if (n.Opened)
             {
                 _debugTiles ??= new PerTile[intermediates.NumTilesX, intermediates.NumTilesZ];
-                using (var ng = _tree.Node("Global"))
+                using (var ng = _tree.Node("全局"))
                 {
                     if (ng.Opened)
                     {
                         _globalHFC ??= CompareAllHeightfields(_navmesh.Extractor!);
-                        _tree.LeafNode($"Old: {_globalHFC.Value.DurationOld:f3}");
-                        _tree.LeafNode($"New: {_globalHFC.Value.DurationNew:f3}");
-                        _tree.LeafNode($"Match: {_globalHFC.Value.Identical}");
+                        _tree.LeafNode($"旧: {_globalHFC.Value.DurationOld:f3}");
+                        _tree.LeafNode($"新: {_globalHFC.Value.DurationNew:f3}");
+                        _tree.LeafNode($"匹配: {_globalHFC.Value.Identical}");
                     }
                 }
 
@@ -233,7 +233,7 @@ class DebugNavmeshCustom : IDisposable
                         if (inter == null)
                             continue;
 
-                        using var nt = _tree.Node($"Tile {x}x{z}");
+                        using var nt = _tree.Node($"层级 {x}x{z}");
                         if (!nt.Opened)
                             continue;
 
@@ -252,14 +252,14 @@ class DebugNavmeshCustom : IDisposable
                             debug.DrawPolyMeshDetail.Draw();
                         }
 
-                        using (var nhfc = _tree.Node("HF comparison"))
+                        using (var nhfc = _tree.Node("高度场比较"))
                         {
                             if (nhfc.Opened)
                             {
                                 debug.HFC ??= CompareHeightfields(x, z, _navmesh.Extractor!);
-                                _tree.LeafNode($"Old: {debug.HFC.Value.DurationOld:f3}");
-                                _tree.LeafNode($"New: {debug.HFC.Value.DurationNew:f3}");
-                                _tree.LeafNode($"Match: {debug.HFC.Value.Identical}");
+                                _tree.LeafNode($"旧: {debug.HFC.Value.DurationOld:f3}");
+                                _tree.LeafNode($"新: {debug.HFC.Value.DurationNew:f3}");
+                                _tree.LeafNode($"一致: {debug.HFC.Value.Identical}");
                             }
                         }
                     }

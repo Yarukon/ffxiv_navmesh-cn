@@ -2,6 +2,7 @@
 using Newtonsoft.Json.Linq;
 using System;
 using System.IO;
+using FFXIVClientStructs.FFXIV.Client.UI;
 
 namespace Navmesh;
 
@@ -21,15 +22,15 @@ public class Config
 
     public void Draw()
     {
-        if (ImGui.Checkbox("Automatically load/build navigation data when changing zones", ref AutoLoadNavmesh))
+        if (ImGui.Checkbox("切换区域时, 自动加载/构建区域导航数据", ref AutoLoadNavmesh))
             NotifyModified();
-        if (ImGui.Checkbox("Enable DTR bar", ref EnableDTR))
+        if (ImGui.Checkbox("启用服务器状态栏信息", ref EnableDTR))
             NotifyModified();
-        if (ImGui.Checkbox("Align camera to movement direction", ref AlignCameraToMovement))
+        if (ImGui.Checkbox("将镜头面向对齐前进方向", ref AlignCameraToMovement))
             NotifyModified();
-        if (ImGui.Checkbox("Show active waypoints", ref ShowWaypoints))
+        if (ImGui.Checkbox("显示即将去往的各目的地点", ref ShowWaypoints))
             NotifyModified();
-        if (ImGui.Checkbox("Always visualize game collision", ref ForceShowGameCollision))
+        if (ImGui.Checkbox("始终开启游戏内碰撞显示", ref ForceShowGameCollision))
             NotifyModified();
     }
 
@@ -46,7 +47,7 @@ public class Config
         }
         catch (Exception e)
         {
-            Service.Log.Error($"Failed to save config to {file.FullName}: {e}");
+            Service.Log.Error($"保存配置文件至 {file.FullName} 时失败: {e}");
         }
     }
 
@@ -77,7 +78,7 @@ public class Config
         }
         catch (Exception e)
         {
-            Service.Log.Error($"Failed to load config from {file.FullName}: {e}");
+            Service.Log.Error($"无法从 {file.FullName} 加载配置内容: {e}");
         }
     }
 

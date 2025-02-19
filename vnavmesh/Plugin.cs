@@ -1,4 +1,4 @@
-﻿using Dalamud.Common;
+using Dalamud.Common;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
@@ -54,22 +54,22 @@ public sealed class Plugin : IDalamudPlugin
         {
             HelpMessage = """
             Opens the debug menu.
-            /vnav moveto <X> <Y> <Z> → move to raw coordinates
-            /vnav movedir <X> <Y> <Z> → move this many units over (relative to player facing)
-            /vnav movetarget → move to target's position
-            /vnav moveflag → move to flag position
-            /vnav flyto <X> <Y> <Z> → fly to raw coordinates
-            /vnav flydir <X> <Y> <Z> → fly this many units over (relative to player facing)
-            /vnav flytarget → fly to target's position
-            /vnav flyflag → fly to flag position
-            /vnav stop → stop all movement
-            /vnav reload → reload current territory's navmesh from cache
-            /vnav rebuild → rebuild current territory's navmesh from scratch
-            /vnav aligncamera → toggle aligning camera to movement direction
-            /vnav aligncamera true|yes|enable → enable aligning camera to movement direction
-            /vnav aligncamera false|no|disable → disable aligning camera to movement direction
-            /vnav dtr → toggle dtr status
-            /vnav collider → toggle collision debug visualization
+            /vnav moveto <X> <Y> <Z> → 移动至该坐标
+            /vnav movedir <X> <Y> <Z> → 根据当前面向移动指定单位距离
+            /vnav movetarget → 移动至当前目标位置
+            /vnav moveflag → 移动至当前标点位置
+            /vnav flyto <X> <Y> <Z> → 飞行至该坐标
+            /vnav flydir <X> <Y> <Z> → 根据当前面向移动指定单位距离
+            /vnav flytarget → 飞行至当前目标位置
+            /vnav flyflag → 飞行至当前标点位置
+            /vnav stop → 停止所有导航移动任务
+            /vnav reload → 从缓存中重新加载本区域导航数据
+            /vnav rebuild → 从游戏中重新构建本区域导航数据
+            /vnav aligncamera → 将当前面向对齐移动方向
+            /vnav aligncamera true|yes|enable → 启用移动时将当前面向对齐移动方向
+            /vnav aligncamera false|no|disable → 禁用移动时将当前面向对齐移动方向
+            /vnav dtr → 开关服务器状态栏插件状态显示
+            /vnav collider → 开关调试性碰撞显示
             """,
             
             ShowInHelp = true,

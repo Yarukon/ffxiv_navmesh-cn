@@ -25,8 +25,8 @@ public class DTRProvider : IDisposable
         if (_dtrBarEntry.Shown)
         {
             var loadProgress = _manager.LoadTaskProgress;
-            var status = loadProgress >= 0 ? $"{loadProgress * 100:f0}%" : _manager.Navmesh != null ? "Ready" : "Not Ready";
-            _dtrBarEntry.Text = "Mesh: " + status;
+            var status = loadProgress >= 0 ? $"{loadProgress * 100:f0}%" : _manager.Navmesh != null ? "就绪" : "加载中";
+            _dtrBarEntry.Text = "导航状态: " + status;
         }
     }
 }
