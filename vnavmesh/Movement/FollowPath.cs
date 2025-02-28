@@ -1,4 +1,5 @@
-﻿using FFXIVClientStructs.FFXIV.Client.Game;
+﻿using Dalamud.Plugin;
+using FFXIVClientStructs.FFXIV.Client.Game;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -12,6 +13,7 @@ public class FollowPath : IDisposable
     public float Tolerance = 0.25f;
     public List<Vector3> Waypoints = new();
 
+    private IDalamudPluginInterface _dalamud;
     private NavmeshManager _manager;
     private OverrideCamera _camera = new();
     private OverrideMovement _movement = new();
@@ -19,8 +21,15 @@ public class FollowPath : IDisposable
 
     private Vector3? posPreviousFrame;
 
-    public FollowPath(NavmeshManager manager)
+    // entries in dalamud shared data cache must be reference types, so we use an array
+    private readonly bool[] _sharedPathIsRunning;
+
+    private const string _sharedPathTag = "vnav.PathIsRunning";
+
+    public FollowPath(IDalamudPluginInterface dalamud, NavmeshManager manager)
     {
+        _dalamud = dalamud;
+        _sharedPathIsRunning = _dalamud.GetOrCreateData<bool[]>(_sharedPathTag, () => [false]);
         _manager = manager;
         _manager.OnNavmeshChanged += OnNavmeshChanged;
         OnNavmeshChanged(_manager.Navmesh, _manager.Query);
@@ -28,10 +37,14 @@ public class FollowPath : IDisposable
 
     public void Dispose()
     {
+        UpdateSharedState(false);
+        _dalamud.RelinquishData(_sharedPathTag);
         _manager.OnNavmeshChanged -= OnNavmeshChanged;
         _camera.Dispose();
         _movement.Dispose();
     }
+
+    private void UpdateSharedState(bool isRunning) => _sharedPathIsRunning[0] = isRunning;
 
     public unsafe void Update()
     {
@@ -65,13 +78,14 @@ public class FollowPath : IDisposable
             _movement.Enabled = _camera.Enabled = false;
             _camera.SpeedH = _camera.SpeedV = default;
             _movement.DesiredPosition = player.Position;
+            UpdateSharedState(false);
         }
         else
         {
             OverrideAFK.ResetTimers();
             _movement.Enabled = MovementAllowed;
             _movement.DesiredPosition = Waypoints[0];
-            if (_movement.DesiredPosition.Y > player.Position.Y && !Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InFlight] && !IgnoreDeltaY) //Only do this bit if on a flying path
+            if (_movement.DesiredPosition.Y > player.Position.Y && !Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InFlight] && !Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.Diving] && !IgnoreDeltaY) //Only do this bit if on a flying path
             {
                 // walk->fly transition (TODO: reconsider?)
                 if (Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.Mounted])
@@ -105,10 +119,18 @@ public class FollowPath : IDisposable
         return Vector3.Cross(ab, av).Length() / ab.Length();
     }
 
-    public void Stop() => Waypoints.Clear();
+    public void Stop()
+    {
+        UpdateSharedState(false);
+        Waypoints.Clear();
+    }
 
     private unsafe void ExecuteJump()
     {
+        // Unable to jump while diving, prevents spamming error messages.
+        if (Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.Diving])
+	        return;
+        
         if (DateTime.Now >= _nextJump)
         {
             ActionManager.Instance()->UseAction(ActionType.GeneralAction, 2);
@@ -118,12 +140,14 @@ public class FollowPath : IDisposable
 
     public void Move(List<Vector3> waypoints, bool ignoreDeltaY)
     {
+        UpdateSharedState(true);
         Waypoints = waypoints;
         IgnoreDeltaY = ignoreDeltaY;
     }
 
     private void OnNavmeshChanged(Navmesh? navmesh, NavmeshQuery? query)
     {
+        UpdateSharedState(false);
         Waypoints.Clear();
     }
 }

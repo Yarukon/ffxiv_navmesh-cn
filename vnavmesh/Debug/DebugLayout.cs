@@ -33,6 +33,7 @@ public unsafe class DebugLayout : IDisposable
     private bool _groupByLayerGroup = true;
     private bool _groupByLayer = true;
     private bool _groupByInstanceType = true;
+    private bool _groupByMaterial = false;
 
     public DebugLayout(DebugGameCollision coll)
     {
@@ -141,6 +142,39 @@ public unsafe class DebugLayout : IDisposable
     }
 
     private UITree.NodeRaii DrawManagerBase(string tag, IManagerBase* manager, string extra) => _tree.Node($"{tag} {(nint)manager:X}{(manager != null ? $" (owner={(nint)manager->Owner:X}, id={manager->Id:X})" : "")} {extra}###{tag}_{(nint)manager:X}", manager == null);
+
+    private static (ulong mat, ulong mask) GetMaterial(ILayoutInstance* inst)
+    {
+        if (inst == null)
+            return (0, 0);
+
+        switch (inst->Id.Type)
+        {
+            case InstanceType.BgPart:
+                var instBgPart = (BgPartsLayoutInstance*)inst;
+                return ((instBgPart->CollisionMaterialIdHigh << 32) | instBgPart->CollisionMaterialIdLow, (instBgPart->CollisionMaterialMaskHigh << 32) | instBgPart->CollisionMaterialMaskLow);
+            case InstanceType.CollisionBox:
+                var instCollGeneric = (CollisionBoxLayoutInstance*)inst;
+                return ((instCollGeneric->MaterialIdHigh << 32) | instCollGeneric->MaterialIdLow, (instCollGeneric->MaterialMaskHigh << 32) | instCollGeneric->MaterialMaskLow);
+            case InstanceType.SharedGroup:
+                ulong mat = 0;
+                ulong mask = 0;
+                SumMaterials((SharedGroupLayoutInstance*)inst, ref mat, ref mask);
+                return (mat, mask);
+            default:
+                return (0, 0);
+        }
+    }
+
+    private static void SumMaterials(SharedGroupLayoutInstance* inst, ref ulong mat, ref ulong mask)
+    {
+        foreach (var part in inst->Instances.Instances)
+        {
+            var (mat1, mask1) = GetMaterial(part.Value->Instance);
+            mat |= mat1;
+            mask |= mask1;
+        }
+    }
 
     private void DrawWorld(LayoutWorld* w)
     {
@@ -495,6 +529,7 @@ public unsafe class DebugLayout : IDisposable
         ImGui.Checkbox("Group by layer group", ref _groupByLayerGroup);
         ImGui.Checkbox("Group by layer", ref _groupByLayer);
         ImGui.Checkbox("Group by instance type", ref _groupByInstanceType);
+        ImGui.Checkbox("Group by material", ref _groupByMaterial);
         DrawInstancesByLayerGroup(_insts.Values);
     }
 
@@ -643,8 +678,29 @@ public unsafe class DebugLayout : IDisposable
                 using var n = _tree.Node($"Type {g.Key}");
                 if (n.Opened)
                 {
-                    DrawInstances(g);
+                    DrawInstancesByMaterial(g);
                 }
+            }
+        }
+        else
+        {
+            DrawInstancesByMaterial(insts);
+        }
+    }
+
+    private void DrawInstancesByMaterial(IEnumerable<InstanceData> insts)
+    {
+        if (_groupByMaterial)
+        {
+            foreach (var m in insts.GroupBy(i =>
+            {
+                var (m1, m2) = GetMaterial(i.Instance);
+                return $"{m1:X}/{m2:X}";
+            }))
+            {
+                using var n = _tree.Node($"Material {m.Key}");
+                if (n.Opened)
+                    DrawInstances(m);
             }
         }
         else

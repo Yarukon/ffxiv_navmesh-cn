@@ -30,6 +30,7 @@ public class SceneExtractor
         ForceUnwalkable = 1 << 0, // this primitive can't be walked on, even if normal is fine
         FlyThrough = 1 << 1, // this primitive should not be present in voxel map
         Unlandable = 1 << 2, // this primitive can't be landed on (fly->walk transition)
+        ForceWalkable = 1 << 3, // this primitive can be walked on, even though it isn't landable
     }
 
     public record struct Primitive(int V1, int V2, int V3, PrimitiveFlags Flags);
@@ -115,8 +116,10 @@ public class SceneExtractor
 
         foreach (var coll in scene.Colliders)
         {
-            if ((coll.matId & 0x400) != 0)
-                continue; // TODO: reconsider... (this aims to filter out doors that are opened when you get near them, not sure whether it's the right condition)
+            // try to filter out all colliders that become inactive under normal conditions (0x400)
+            // excluding the invisible walls surrounding overworld zones, which additionally have bit 0x10 set
+            if ((coll.matId & 0x410) == 0x400)
+                continue;
 
             var info = ExtractColliderInfo(scene, coll.key, coll.transform, coll.crc, coll.type);
             if (info.path.Length > 0)
@@ -267,13 +270,27 @@ public class SceneExtractor
         return part;
     }
 
+    private static ulong[] _materialsFlyThrough = [
+        0x100000, // generally set on the invisible walls surrounding walkable areas that can be flown from
+        0x1000000, // if this bit is set, flying upwards into the surface will trigger dive -> fly (or swim) transition
+        0x800000, // not really sure what this is, appears on invisible roof of divable zones
+        0x8000, // actually marks fishable water, but all divable areas are covered by a roof with this bit set
+    ];
+
     private PrimitiveFlags ExtractMaterialFlags(ulong mat)
     {
         var res = PrimitiveFlags.None;
+        foreach (var fly in _materialsFlyThrough)
+            if ((mat & fly) != 0)
+                res |= PrimitiveFlags.FlyThrough;
+
         if ((mat & 0x200000) != 0)
             res |= PrimitiveFlags.Unlandable;
-        if ((mat & 0x100000) != 0)
-            res |= PrimitiveFlags.FlyThrough;
+
+        // this bit is set for the invisible walls that surround zones that show a hexagon pattern when you fly into them; some are *not* already flagged as unlandable for whatever reason, probably just a mistake
+        if ((mat & 0x10) != 0)
+            res |= PrimitiveFlags.Unlandable | PrimitiveFlags.ForceUnwalkable;
+
         return res;
     }
 
