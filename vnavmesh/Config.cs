@@ -33,7 +33,7 @@ public class Config
             NotifyModified();
         if (ImGui.Checkbox("始终开启游戏内碰撞显示", ref ForceShowGameCollision))
             NotifyModified();
-        if (ImGui.Checkbox("Cancel current path on player movement input", ref CancelMoveOnUserInput))
+        if (ImGui.Checkbox("当尝试操控游戏角色时, 自动取消寻路任务", ref CancelMoveOnUserInput))
             NotifyModified();
     }
 

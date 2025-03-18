@@ -23,16 +23,6 @@ public sealed class Plugin : IDalamudPlugin
 
     public Plugin(IDalamudPluginInterface dalamud)
     {
-        if (!dalamud.ConfigDirectory.Exists)
-            dalamud.ConfigDirectory.Create();
-        var dalamudRoot = dalamud.GetType().Assembly.
-                GetType("Dalamud.Service`1", true)!.MakeGenericType(dalamud.GetType().Assembly.GetType("Dalamud.Dalamud", true)!).
-                GetMethod("Get")!.Invoke(null, BindingFlags.Default, null, Array.Empty<object>(), null);
-        var dalamudStartInfo = (DalamudStartInfo)dalamudRoot?.GetType().GetProperty("StartInfo", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(dalamudRoot)!;
-        InteropGenerator.Runtime.Resolver.GetInstance.Setup(0, dalamudStartInfo.GameVersion?.ToString() ?? "", new(Path.Combine(dalamud.ConfigDirectory.FullName, "cs.json")));
-        FFXIVClientStructs.Interop.Generated.Addresses.Register();
-        InteropGenerator.Runtime.Resolver.GetInstance.Resolve();
-
         dalamud.Create<Service>();
         Service.Config.Load(dalamud.ConfigFile);
         Service.Config.Modified += () => Service.Config.Save(dalamud.ConfigFile);
