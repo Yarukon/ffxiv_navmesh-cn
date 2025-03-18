@@ -15,6 +15,7 @@ public class Config
     public bool AlignCameraToMovement;
     public bool ShowWaypoints;
     public bool ForceShowGameCollision;
+    public bool CancelMoveOnUserInput;
 
     public event Action? Modified;
 
@@ -31,6 +32,8 @@ public class Config
         if (ImGui.Checkbox("显示即将去往的各目的地点", ref ShowWaypoints))
             NotifyModified();
         if (ImGui.Checkbox("始终开启游戏内碰撞显示", ref ForceShowGameCollision))
+            NotifyModified();
+        if (ImGui.Checkbox("Cancel current path on player movement input", ref CancelMoveOnUserInput))
             NotifyModified();
     }
 

@@ -92,7 +92,7 @@ class DebugNavmeshManager : IDisposable
         DrawPosition("标点", MapUtils.FlagToPoint(_manager.Query) ?? default);
         DrawPosition("地面", _manager.Query.FindPointOnFloor(playerPos) ?? default);
 
-        _drawNavmesh ??= new(_manager.Navmesh.Mesh, _manager.Query.MeshQuery, _tree, _dd);
+        _drawNavmesh ??= new(_manager.Navmesh.Mesh, _manager.Query.MeshQuery, _manager.Query.LastPath, _tree, _dd);
         _drawNavmesh.Draw();
         if (_manager.Navmesh.Volume != null)
         {

@@ -1,3 +1,4 @@
+﻿using Dalamud.Game.ClientState.Conditions;
 using FFXIVClientStructs.FFXIV.Client.LayoutEngine;
 using System;
 using System.Collections.Generic;
@@ -73,13 +74,32 @@ public sealed class NavmeshManager : IDisposable
         if (CurrentKey.Length > 0)
         {
             var cts = _currentCTS = new();
-            var scene = new SceneDefinition();
-            scene.FillFromActiveLayout();
-            var cacheKey = GetCacheKey(scene);
             ExecuteWhenIdle(async cancel =>
             {
                 _loadTaskProgress = 0;
+
                 using var resetLoadProgress = new OnDispose(() => _loadTaskProgress = -1);
+
+                var waitStart = DateTime.Now;
+
+                while (InCutscene)
+                {
+                    if ((DateTime.Now - waitStart).TotalSeconds >= 5)
+                    {
+                        waitStart = DateTime.Now;
+                        Log("waiting for cutscene");
+                    }
+                    await Service.Framework.DelayTicks(1, cancel);
+                }
+
+                var (cacheKey, scene) = await Service.Framework.Run(() =>
+                {
+                    var scene = new SceneDefinition();
+                    scene.FillFromActiveLayout();
+                    var cacheKey = GetCacheKey(scene);
+                    return (cacheKey, scene);
+                }, cancel);
+
                 Log($"Kicking off build for '{cacheKey}'");
                 var navmesh = await Task.Run(() => BuildNavmesh(scene, cacheKey, allowLoadFromCache, cancel), cancel);
                 Log($"Mesh loaded: '{cacheKey}'");
@@ -90,6 +110,16 @@ public sealed class NavmeshManager : IDisposable
         }
         return true;
     }
+
+    internal void ReplaceMesh(Navmesh mesh)
+    {
+        Log($"Mesh replaced");
+        Navmesh = mesh;
+        Query = new(Navmesh);
+        OnNavmeshChanged?.Invoke(Navmesh, Query);
+    }
+
+    private static bool InCutscene => Service.Condition[ConditionFlag.WatchingCutscene] || Service.Condition[ConditionFlag.OccupiedInCutSceneEvent];
 
     public Task<List<Vector3>> QueryPath(Vector3 from, Vector3 to, bool flying, CancellationToken externalCancel = default)
     {

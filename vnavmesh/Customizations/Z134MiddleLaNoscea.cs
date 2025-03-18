@@ -1,16 +1,15 @@
 ﻿namespace Navmesh.Customizations;
 
-[CustomizationTerritory(795)]
-class Z0795EurekaPyros : NavmeshCustomization
+[CustomizationTerritory(134)]
+public class Z134MiddleLaNoscea : NavmeshCustomization
 {
     public override int Version => 1;
 
-    // remove all floor triangles that are part of existing colliders, but are far below the walkable area of the map, as they can cause annoying false positives when calling PointOnFloor
     public override void CustomizeScene(SceneExtractor scene)
     {
         foreach (var (key, mesh) in scene.Meshes)
         {
-            if (key.StartsWith("bg/ex2/05_zon_z3/fld/z3fc/collision/tr"))
+            if (key.StartsWith("bg/ffxiv/sea_s1/fld/s1f1/collision/tr"))
             {
                 foreach (var part in mesh.Parts)
                 {
@@ -20,8 +19,7 @@ class Z0795EurekaPyros : NavmeshCustomization
                         var v1 = part.Vertices[prim.V1];
                         var v2 = part.Vertices[prim.V2];
                         var v3 = part.Vertices[prim.V3];
-                        // lowest walkable point in pyros is (probably) the SW edge of the skoll prep area, which is at about Y=578
-                        if (v1.Y < 100 && v2.Y < 100 && v3.Y < 100)
+                        if (v1.Y < 2 && v2.Y < 2 && v3.Y < 2)
                             part.Primitives[i] = prim with { Flags = prim.Flags | SceneExtractor.PrimitiveFlags.ForceUnwalkable };
                     }
                 }
