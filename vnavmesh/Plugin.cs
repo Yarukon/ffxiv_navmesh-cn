@@ -23,9 +23,6 @@ public sealed class Plugin : IDalamudPlugin
 
     public Plugin(IDalamudPluginInterface dalamud)
     {
-        if (!dalamud.ConfigDirectory.Exists)
-            dalamud.ConfigDirectory.Create();
-
         dalamud.Create<Service>();
         Service.Config.Load(dalamud.ConfigFile);
         Service.Config.Modified += () => Service.Config.Save(dalamud.ConfigFile);
