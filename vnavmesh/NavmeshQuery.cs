@@ -20,7 +20,6 @@ public class NavmeshQuery
     public           DtNavMeshQuery MeshQuery;
     public           VoxelPathfind? VolumeQuery;
     private readonly IDtQueryFilter _filter = new DtQueryDefaultFilter();
-    private readonly Random         _random = new();
 
     public  List<long> LastPath => _lastPath;
     private List<long> _lastPath = [];
@@ -65,6 +64,7 @@ public class NavmeshQuery
         Service.Log.Debug($"寻路耗时 {timer.Value().TotalSeconds:f3} 秒: {string.Join(", ", _lastPath.Select(r => r.ToString("X")))}");
 
         var endPos = to.SystemToRecast();
+
         if (useStringPulling)
         {
             var straightPath = new List<DtStraightPath>();
@@ -75,24 +75,12 @@ public class NavmeshQuery
             var res = straightPath.Select(p => p.pos.RecastToSystem()).ToList();
             res.Add(endPos.RecastToSystem());
 
-            if (res.Count > 2)
-            {
-                var randomizedPoints = ApplyPathRandomization(res);
-                Service.Log.Debug($"[随机化成功] 总点位: {res.Count}, 随机化处理点位: {randomizedPoints}");
-            }
-
             return res;
         }
         else
         {
             var res = _lastPath.Select(r => MeshQuery.GetAttachedNavMesh().GetPolyCenter(r).RecastToSystem()).ToList();
             res.Add(endPos.RecastToSystem());
-
-            if (res.Count > 2)
-            {
-                var randomizedPoints = ApplyPathRandomization(res);
-                Service.Log.Debug($"[随机化成功] 总点位: {res.Count}, 随机化处理点位: {randomizedPoints}");
-            }
 
             return res;
         }
@@ -116,7 +104,7 @@ public class NavmeshQuery
         }
 
         var timer = Timer.Create();
-        
+
         // TODO: 对于拉绳算法，我们是否需要中间点？
         var voxelPath = VolumeQuery.FindPath(startVoxel, endVoxel, from, to, useRaycast, false, cancel);
         if (voxelPath.Count == 0)
@@ -164,140 +152,11 @@ public class NavmeshQuery
             var deviation = Vector3.Distance(curr, idealPos);
 
             // 累加标准化偏差
-            totalVariance += deviation / segmentLength;
+            totalVariance += deviation / Math.Max(0.001f, segmentLength);
         }
 
         // 返回平均方差
-        return totalVariance / (path.Count - 2);
-    }
-
-    // 优化路径随机化方法
-    private int ApplyPathRandomization(List<Vector3> path)
-    {
-        var randomizedPoints = 0;
-
-        // 分析路径特征，计算平均段长度
-        float totalPathLength                                    = 0;
-        for (var i = 0; i < path.Count - 1; i++) totalPathLength += Vector3.Distance(path[i], path[i + 1]);
-
-        var averageSegmentLength = totalPathLength / (path.Count - 1);
-        var pathLength           = totalPathLength;
-
-        // 根据路径长度动态调整随机因子
-        var dynamicRandomFactor = Math.Min(0.5f,
-                                           Math.Max(0.05f, 0.5f * (pathLength / 50))); // 长路径使用更大的随机因子
-
-        // 保留起点和终点不变
-        for (var i = 1; i < path.Count - 1; i++)
-        {
-            // 计算点在路径中的相对位置（0-1）
-            var progressAlongPath = (float)i / (path.Count - 1);
-
-            // 计算每个点与前后点的关系，决定随机化强度
-            var distToPrev = i > 0 ? Vector3.Distance(path[i],              path[i - 1]) : 0;
-            var distToNext = i < path.Count - 1 ? Vector3.Distance(path[i], path[i + 1]) : 0;
-
-            // 如果是拐点（距离前后点较远），减少随机化强度
-            var isCornerPoint = distToPrev > averageSegmentLength * 1.5f || distToNext > averageSegmentLength * 1.5f;
-
-            // 在路径中间区域应用最大随机性，在接近起点和终点处减小随机性
-            var positionFactor = MathF.Sin(progressAlongPath * MathF.PI);
-
-            // 为拐点减少随机性
-            var cornerFactor = isCornerPoint ? 0.5f : 1.0f;
-
-            // 最终的局部随机因子
-            var localRandomFactor = dynamicRandomFactor * positionFactor * cornerFactor;
-
-            // 获取当前点和前后点，用于计算合理的随机方向
-            var prev = path[i - 1];
-            var curr = path[i];
-            var next = i < path.Count - 1 ? path[i + 1] : curr + (curr - prev);
-
-            // 计算路径方向
-            var dirToPrev = Vector3.Normalize(prev - curr);
-            var dirToNext = Vector3.Normalize(next - curr);
-
-            // 计算路径整体方向以及法向量
-            Vector3 pathDir;
-            if (Vector3.Dot(dirToPrev, dirToNext) < -0.9f)
-            {
-                // 如果前后方向几乎相反，使用前一个方向
-                pathDir = -dirToPrev;
-            }
-            else
-            {
-                // 否则使用平均方向
-                pathDir = Vector3.Normalize(dirToPrev + dirToNext);
-            }
-
-            // 计算两个相互垂直的方向，用于在3D空间中随机化
-            var perpH = new Vector3(-pathDir.Z, 0, pathDir.X);            // 水平面上的垂直向量
-            var perpV = Vector3.Normalize(Vector3.Cross(pathDir, perpH)); // 竖直方向的向量
-
-            // 生成两个-1到1之间的随机数
-            var randomH = ((float)_random.NextDouble() * 2) - 1;
-            var randomV = (((float)_random.NextDouble() * 2) - 1) * 0.3f; // 竖直方向的随机性更小
-
-            // 只有超过一定阈值才应用随机化，避免每个点都有微小变化
-            if (Math.Abs(randomH) > 0.2f || Math.Abs(randomV) > 0.05f)
-            {
-                // 计算随机偏移向量
-                var offset = ((perpH * randomH) + (perpV * randomV)) * localRandomFactor * 3.0f;
-
-                // 应用随机偏移
-                var newPos = path[i] + offset;
-
-                // 确保修改后的路径点不会落在障碍物中或离开导航网格太远
-                var nearestPoint = FindNearestPointOnMesh(newPos, 2f, 2f);
-                if (nearestPoint != null)
-                {
-                    // 如果随机化后的点与网格上最近点的距离在合理范围内，使用随机化后的点
-                    var distToMesh = Vector3.Distance(newPos, nearestPoint.Value);
-                    if (distToMesh < 1.0f)
-                        path[i] = newPos;
-                    else
-                    {
-                        // 如果距离太远，则部分向随机方向移动
-                        path[i] = Vector3.Lerp(path[i], nearestPoint.Value, 0.7f);
-                    }
-
-                    randomizedPoints++;
-                }
-            }
-        }
-
-        // 平滑处理，确保路径更自然
-        SmoothPath(path);
-
-        return randomizedPoints;
-    }
-
-    // 添加路径平滑处理方法
-    private void SmoothPath(List<Vector3> path)
-    {
-        if (path.Count < 4) return; // 至少需要4个点才能平滑
-
-        var originalPoints = new List<Vector3>(path);
-
-        // 保留起点和终点，平滑中间点
-        for (var i = 1; i < path.Count - 1; i++)
-            // 与相邻点进行加权平均
-            if (i > 0 && i < path.Count - 1)
-            {
-                // 使用前一个点、当前点和后一个点的加权平均
-                var smoothed = (originalPoints[i]     * 0.6f) +
-                               (originalPoints[i - 1] * 0.2f) +
-                               (originalPoints[i + 1] * 0.2f);
-
-                // 确保平滑后的点仍在可行走区域
-                var nearestPoint = FindNearestPointOnMesh(smoothed, 1.5f, 1.5f);
-                if (nearestPoint != null)
-                {
-                    // 如果平滑点与最近网格点的距离在合理范围内
-                    if (Vector3.Distance(smoothed, nearestPoint.Value) < 0.8f) path[i] = smoothed;
-                }
-            }
+        return path.Count > 2 ? totalVariance / (path.Count - 2) : 0;
     }
 
     // returns 0 if not found, otherwise polygon ref
