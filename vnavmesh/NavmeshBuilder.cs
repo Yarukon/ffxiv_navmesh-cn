@@ -1,9 +1,9 @@
-﻿using DotRecast.Core;
+﻿using System;
+using System.Numerics;
+using DotRecast.Core;
 using DotRecast.Detour;
 using DotRecast.Recast;
 using Navmesh.NavVolume;
-using System;
-using System.Numerics;
 
 namespace Navmesh;
 
@@ -11,28 +11,33 @@ namespace Navmesh;
 // individual tiles can be built concurrently
 public class NavmeshBuilder
 {
-    public record struct Intermediates(RcHeightfield SolidHeightfield, RcCompactHeightfield CompactHeightfield, RcContourSet ContourSet, RcPolyMesh PolyMesh, RcPolyMeshDetail? DetailMesh);
+    public record struct Intermediates(
+        RcHeightfield        SolidHeightfield,
+        RcCompactHeightfield CompactHeightfield,
+        RcContourSet         ContourSet,
+        RcPolyMesh           PolyMesh,
+        RcPolyMeshDetail?    DetailMesh);
 
-    public RcContext Telemetry = new();
+    public RcContext       Telemetry = new();
     public NavmeshSettings Settings;
-    public SceneExtractor Scene;
-    public Vector3 BoundsMin;
-    public Vector3 BoundsMax;
-    public int NumTilesX;
-    public int NumTilesZ;
-    public Navmesh Navmesh; // should not be accessed while building tiles
+    public SceneExtractor  Scene;
+    public Vector3         BoundsMin;
+    public Vector3         BoundsMax;
+    public int             NumTilesX;
+    public int             NumTilesZ;
+    public Navmesh         Navmesh; // should not be accessed while building tiles
 
-    private int _walkableClimbVoxels;
-    private int _walkableHeightVoxels;
-    private int _walkableRadiusVoxels;
-    private float _walkableNormalThreshold;
-    private int _borderSizeVoxels;
-    private float _borderSizeWorld;
-    private int _tileSizeXVoxels;
-    private int _tileSizeZVoxels;
-    private int _voxelizerNumX = 1;
-    private int _voxelizerNumY = 1;
-    private int _voxelizerNumZ = 1;
+    private readonly int   _walkableClimbVoxels;
+    private readonly int   _walkableHeightVoxels;
+    private readonly int   _walkableRadiusVoxels;
+    private readonly float _walkableNormalThreshold;
+    private readonly int   _borderSizeVoxels;
+    private readonly float _borderSizeWorld;
+    private readonly int   _tileSizeXVoxels;
+    private readonly int   _tileSizeZVoxels;
+    private readonly int   _voxelizerNumX = 1;
+    private readonly int   _voxelizerNumY = 1;
+    private readonly int   _voxelizerNumZ = 1;
 
     public NavmeshBuilder(SceneDefinition scene, NavmeshCustomization customization)
     {
@@ -50,29 +55,29 @@ public class NavmeshBuilder
 
         // create empty navmesh
         var navmeshParams = new DtNavMeshParams();
-        navmeshParams.orig = BoundsMin.SystemToRecast();
-        navmeshParams.tileWidth = (BoundsMax.X - BoundsMin.X) / NumTilesX;
+        navmeshParams.orig       = BoundsMin.SystemToRecast();
+        navmeshParams.tileWidth  = (BoundsMax.X - BoundsMin.X) / NumTilesX;
         navmeshParams.tileHeight = (BoundsMax.Z - BoundsMin.Z) / NumTilesZ;
-        navmeshParams.maxTiles = NumTilesX * NumTilesZ;
-        navmeshParams.maxPolys = 1 << DtNavMesh.DT_POLY_BITS;
+        navmeshParams.maxTiles   = NumTilesX                   * NumTilesZ;
+        navmeshParams.maxPolys   = 1 << DtNavMesh.DT_POLY_BITS;
 
         var navmesh = new DtNavMesh(navmeshParams, Settings.PolyMaxVerts);
-        var volume = flyable ? new VoxelMap(BoundsMin, BoundsMax, Settings.NumTiles) : null;
+        var volume  = flyable ? new VoxelMap(BoundsMin, BoundsMax, Settings.NumTiles) : null;
         Navmesh = new(customization.Version, navmesh, volume);
 
         // calculate derived parameters
-        _walkableClimbVoxels = (int)MathF.Floor(Settings.AgentMaxClimb / Settings.CellHeight);
-        _walkableHeightVoxels = (int)MathF.Ceiling(Settings.AgentHeight / Settings.CellHeight);
-        _walkableRadiusVoxels = (int)MathF.Ceiling(Settings.AgentRadius / Settings.CellSize);
+        _walkableClimbVoxels     = (int)MathF.Floor(Settings.AgentMaxClimb / Settings.CellHeight);
+        _walkableHeightVoxels    = (int)MathF.Ceiling(Settings.AgentHeight / Settings.CellHeight);
+        _walkableRadiusVoxels    = (int)MathF.Ceiling(Settings.AgentRadius / Settings.CellSize);
         _walkableNormalThreshold = Settings.AgentMaxSlopeDeg.Degrees().Cos();
-        _borderSizeVoxels = 3 + _walkableRadiusVoxels;
-        _borderSizeWorld = _borderSizeVoxels * Settings.CellSize;
-        _tileSizeXVoxels = (int)MathF.Ceiling(navmeshParams.tileWidth / Settings.CellSize) + 2 * _borderSizeVoxels;
-        _tileSizeZVoxels = (int)MathF.Ceiling(navmeshParams.tileHeight / Settings.CellSize) + 2 * _borderSizeVoxels;
+        _borderSizeVoxels        = 3 + _walkableRadiusVoxels;
+        _borderSizeWorld         = _borderSizeVoxels * Settings.CellSize;
+        _tileSizeXVoxels         = (int)MathF.Ceiling(navmeshParams.tileWidth  / Settings.CellSize) + (2 * _borderSizeVoxels);
+        _tileSizeZVoxels         = (int)MathF.Ceiling(navmeshParams.tileHeight / Settings.CellSize) + (2 * _borderSizeVoxels);
         if (volume != null)
         {
             _voxelizerNumY = Settings.NumTiles[0];
-            for (int i = 1; i < Settings.NumTiles.Length; ++i)
+            for (var i = 1; i < Settings.NumTiles.Length; ++i)
             {
                 var n = Settings.NumTiles[i];
                 _voxelizerNumX *= n;
@@ -91,10 +96,10 @@ public class NavmeshBuilder
         // we expand the heighfield bounding box by border size to find the extents of geometry we need to build this tile
         // this is done in order to make sure that the navmesh tiles connect correctly at the borders, and the obstacles close to the border work correctly with the dilation process
         // no polygons (or contours) will be created on the border area
-        float widthWorld = Navmesh.Mesh.GetParams().tileWidth;
-        float heightWorld = Navmesh.Mesh.GetParams().tileHeight;
-        var tileBoundsMin = new Vector3(BoundsMin.X + x * widthWorld, BoundsMin.Y, BoundsMin.Z + z * heightWorld);
-        var tileBoundsMax = new Vector3(tileBoundsMin.X + widthWorld, BoundsMax.Y, tileBoundsMin.Z + heightWorld);
+        var widthWorld    = Navmesh.Mesh.GetParams().tileWidth;
+        var heightWorld   = Navmesh.Mesh.GetParams().tileHeight;
+        var tileBoundsMin = new Vector3(BoundsMin.X     + (x * widthWorld), BoundsMin.Y, BoundsMin.Z     + (z * heightWorld));
+        var tileBoundsMax = new Vector3(tileBoundsMin.X + widthWorld,       BoundsMax.Y, tileBoundsMin.Z + heightWorld);
         tileBoundsMin.X -= _borderSizeWorld;
         tileBoundsMin.Z -= _borderSizeWorld;
         tileBoundsMax.X += _borderSizeWorld;
@@ -103,10 +108,13 @@ public class NavmeshBuilder
         // 1. voxelize raw geometry
         // this creates a 'solid heightfield', which is a grid of sorted linked lists of spans
         // each span contains an 'area id', which is either walkable (if normal is good) or not (otherwise); areas outside spans contains no geometry at all
-        var shf = new RcHeightfield(_tileSizeXVoxels, _tileSizeZVoxels, tileBoundsMin.SystemToRecast(), tileBoundsMax.SystemToRecast(), Settings.CellSize, Settings.CellHeight, _borderSizeVoxels);
+        var shf = new RcHeightfield(_tileSizeXVoxels, _tileSizeZVoxels, tileBoundsMin.SystemToRecast(), tileBoundsMax.SystemToRecast(), Settings.CellSize,
+                                    Settings.CellHeight, _borderSizeVoxels);
         var vox = Navmesh.Volume != null ? new Voxelizer(_voxelizerNumX, _voxelizerNumY, _voxelizerNumZ) : null;
-        var rasterizer = new NavmeshRasterizer(shf, _walkableNormalThreshold, _walkableClimbVoxels, _walkableHeightVoxels, Settings.Filtering.HasFlag(NavmeshSettings.Filter.Interiors), vox, Telemetry);
-        rasterizer.Rasterize(Scene, SceneExtractor.MeshType.FileMesh | SceneExtractor.MeshType.CylinderMesh | SceneExtractor.MeshType.AnalyticShape, true, true); // rasterize normal geometry
+        var rasterizer = new NavmeshRasterizer(shf, _walkableNormalThreshold, _walkableClimbVoxels, _walkableHeightVoxels,
+                                               Settings.Filtering.HasFlag(NavmeshSettings.Filter.Interiors), vox, Telemetry);
+        rasterizer.Rasterize(Scene, SceneExtractor.MeshType.FileMesh | SceneExtractor.MeshType.CylinderMesh | SceneExtractor.MeshType.AnalyticShape, true,
+                             true);                                                                                        // rasterize normal geometry
         rasterizer.Rasterize(Scene, SceneExtractor.MeshType.Terrain | SceneExtractor.MeshType.AnalyticPlane, false, true); // rasterize terrain and bounding planes
 
         // 2. perform a bunch of postprocessing on a heightfield
@@ -146,91 +154,86 @@ public class NavmeshBuilder
 
         // 5. build connected regions; this assigns region ids to spans in the compact heightfield
         // there are different algorithms with different tradeoffs
-        var regionMinArea = (int)(Settings.RegionMinSize * Settings.RegionMinSize);
+        var regionMinArea   = (int)(Settings.RegionMinSize   * Settings.RegionMinSize);
         var regionMergeArea = (int)(Settings.RegionMergeSize * Settings.RegionMergeSize);
-        if (Settings.Partitioning == RcPartition.WATERSHED)
+        switch (Settings.Partitioning)
         {
-            RcRegions.BuildDistanceField(Telemetry, chf);
-            RcRegions.BuildRegions(Telemetry, chf, regionMinArea, regionMergeArea);
-        }
-        else if (Settings.Partitioning == RcPartition.MONOTONE)
-        {
-            RcRegions.BuildRegionsMonotone(Telemetry, chf, regionMinArea, regionMergeArea);
-        }
-        else
-        {
-            RcRegions.BuildLayerRegions(Telemetry, chf, regionMinArea);
+            case RcPartition.WATERSHED:
+                RcRegions.BuildDistanceField(Telemetry, chf);
+                RcRegions.BuildRegions(Telemetry, chf, regionMinArea, regionMergeArea);
+                break;
+            case RcPartition.MONOTONE:
+                RcRegions.BuildRegionsMonotone(Telemetry, chf, regionMinArea, regionMergeArea);
+                break;
+            default:
+                RcRegions.BuildLayerRegions(Telemetry, chf, regionMinArea);
+                break;
         }
 
         // 6. build contours around regions, then simplify them to reduce vertex count
         // contour set is just a list of contours, each of which is (when projected to XZ plane) a simple non-convex polygon that belong to a single region with a single area id
         var polyMaxEdgeLenVoxels = (int)(Settings.PolyMaxEdgeLen / Settings.CellSize);
-        var cset = RcContours.BuildContours(Telemetry, chf, Settings.PolyMaxSimplificationError, polyMaxEdgeLenVoxels, RcBuildContoursFlags.RC_CONTOUR_TESS_WALL_EDGES);
+        var cset = RcContours.BuildContours(Telemetry, chf, Settings.PolyMaxSimplificationError, polyMaxEdgeLenVoxels,
+                                            RcBuildContoursFlags.RC_CONTOUR_TESS_WALL_EDGES);
 
         // 7. triangulate contours to build a mesh of convex polygons with adjacency information
         var pmesh = RcMeshs.BuildPolyMesh(Telemetry, cset, Settings.PolyMaxVerts);
-        for (int i = 0; i < pmesh.npolys; ++i)
+        for (var i = 0; i < pmesh.npolys; ++i)
             pmesh.flags[i] = 1;
 
         // 8. split polygonal mesh into triangular mesh with correct height
         // this step is optional
-        var detailSampleDist = Settings.DetailSampleDist < 0.9f ? 0 : Settings.CellSize * Settings.DetailSampleDist;
+        var detailSampleDist     = Settings.DetailSampleDist < 0.9f ? 0 : Settings.CellSize * Settings.DetailSampleDist;
         var detailSampleMaxError = Settings.CellHeight * Settings.DetailMaxSampleError;
-        RcPolyMeshDetail? dmesh = RcMeshDetails.BuildPolyMeshDetail(Telemetry, pmesh, chf, detailSampleDist, detailSampleMaxError);
+        var dmesh                = RcMeshDetails.BuildPolyMeshDetail(Telemetry, pmesh, chf, detailSampleDist, detailSampleMaxError);
 
         // 9. create detour navmesh data
-        var navmeshConfig = new DtNavMeshCreateParams()
+        var navmeshConfig = new DtNavMeshCreateParams
         {
-            verts = pmesh.verts,
+            verts     = pmesh.verts,
             vertCount = pmesh.nverts,
-            polys = pmesh.polys,
+            polys     = pmesh.polys,
             polyFlags = pmesh.flags,
             polyAreas = pmesh.areas,
             polyCount = pmesh.npolys,
-            nvp = pmesh.nvp,
+            nvp       = pmesh.nvp,
 
-            detailMeshes = dmesh?.meshes,
-            detailVerts = dmesh?.verts,
+            detailMeshes     = dmesh?.meshes,
+            detailVerts      = dmesh?.verts,
             detailVertsCount = dmesh?.nverts ?? 0,
-            detailTris = dmesh?.tris,
-            detailTriCount = dmesh?.ntris ?? 0,
+            detailTris       = dmesh?.tris,
+            detailTriCount   = dmesh?.ntris ?? 0,
 
-            tileX = x,
-            tileZ = z,
+            tileX     = x,
+            tileZ     = z,
             tileLayer = 0, // TODO: do we care to use layers?..
-            bmin = pmesh.bmin,
-            bmax = pmesh.bmax,
+            bmin      = pmesh.bmin,
+            bmax      = pmesh.bmax,
 
             walkableHeight = Settings.AgentHeight,
             walkableRadius = Settings.AgentRadius,
-            walkableClimb = Settings.AgentMaxClimb,
-            cs = Settings.CellSize,
-            ch = Settings.CellHeight,
+            walkableClimb  = Settings.AgentMaxClimb,
+            cs             = Settings.CellSize,
+            ch             = Settings.CellHeight,
 
-            buildBvTree = true, // TODO: false if using layers?
+            buildBvTree = true // TODO: false if using layers?
         };
         var navmeshData = DtNavMeshBuilder.CreateNavMeshData(navmeshConfig);
 
         // 10. add tile to the navmesh
         if (navmeshData != null)
         {
-            lock (Navmesh.Mesh)
-            {
-                Navmesh.Mesh.AddTile(navmeshData, 0, 0);
-            }
+            lock (Navmesh.Mesh) { Navmesh.Mesh.AddTile(navmeshData, 0, 0); }
         }
 
         // 11. build nav volume data
         // TODO: keep local 1x1x16 voxel map, and just merge under lock
         if (Navmesh.Volume != null && vox != null)
         {
-            lock (Navmesh.Volume)
-            {
-                Navmesh.Volume.Build(vox, x, z);
-            }
+            lock (Navmesh.Volume) { Navmesh.Volume.Build(vox, x, z); }
         }
 
-        Service.Log.Debug($"built navmesh tile {x}x{z} in {timer.Value().TotalMilliseconds}ms");
+        Service.Log.Debug($"构建导航区块 {x}x{z} 完成 ({timer.Value().TotalMilliseconds}ms)");
         return new(shf, chf, cset, pmesh, dmesh);
     }
 }
