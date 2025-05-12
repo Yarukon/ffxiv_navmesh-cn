@@ -1,13 +1,10 @@
-using Dalamud.Common;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Navmesh.Movement;
 using System;
-using System.IO;
 using System.Numerics;
-using System.Reflection;
 
 namespace Navmesh;
 
@@ -30,8 +27,8 @@ public sealed class Plugin : IDalamudPlugin
         _navmeshManager = new(new($"{dalamud.ConfigDirectory.FullName}/meshcache"));
         _followPath = new(dalamud, _navmeshManager);
         _asyncMove = new(_navmeshManager, _followPath);
-        _dtrProvider = new(_navmeshManager);
-        _wndMain = new(_navmeshManager, _followPath, _asyncMove, _dtrProvider);
+        _dtrProvider = new(_navmeshManager, _asyncMove);
+        _wndMain = new(_navmeshManager, _followPath, _asyncMove, _dtrProvider, dalamud.ConfigDirectory.FullName);
         _ipcProvider = new(_navmeshManager, _followPath, _asyncMove, _wndMain, _dtrProvider);
 
         WindowSystem.AddWindow(_wndMain);
@@ -85,6 +82,18 @@ public sealed class Plugin : IDalamudPlugin
         _asyncMove.Dispose();
         _followPath.Dispose();
         _navmeshManager.Dispose();
+    }
+
+    public static void DuoLog(Exception ex)
+    {
+        DuoLog(ex, ex.Message);
+        throw ex;
+    }
+
+    public static void DuoLog(Exception ex, string message)
+    {
+        Service.ChatGui.Print($"[{Service.PluginInterface.Manifest.Name}] {message}");
+        Service.Log.Error(ex, message);
     }
 
     private void OnUpdate(IFramework fwk)

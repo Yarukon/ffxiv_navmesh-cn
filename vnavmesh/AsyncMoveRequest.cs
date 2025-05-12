@@ -6,20 +6,12 @@ using System.Threading.Tasks;
 
 namespace Navmesh;
 
-public class AsyncMoveRequest : IDisposable
+public class AsyncMoveRequest(NavmeshManager manager, FollowPath follow) : IDisposable
 {
-    private NavmeshManager _manager;
-    private FollowPath _follow;
     private Task<List<Vector3>>? _pendingTask;
-    private bool _pendingFly;
+    private bool                 _pendingFly;
 
     public bool TaskInProgress => _pendingTask != null;
-
-    public AsyncMoveRequest(NavmeshManager manager, FollowPath follow)
-    {
-        _manager = manager;
-        _follow = follow;
-    }
 
     public void Dispose()
     {
@@ -34,16 +26,16 @@ public class AsyncMoveRequest : IDisposable
 
     public void Update()
     {
-        if (_pendingTask != null && _pendingTask.IsCompleted)
+        if (_pendingTask is { IsCompleted: true })
         {
-            Service.Log.Information($"Pathfinding complete");
+            Service.Log.Information("寻路完成");
             try
             {
-                _follow.Move(_pendingTask.Result, !_pendingFly);
+                follow.Move(_pendingTask.Result, !_pendingFly);
             }
             catch (Exception ex)
             {
-                Service.Log.Error($"Failed to find path: {ex}");
+                Plugin.DuoLog(ex, "寻路失败");
             }
             _pendingTask.Dispose();
             _pendingTask = null;
@@ -54,12 +46,12 @@ public class AsyncMoveRequest : IDisposable
     {
         if (_pendingTask != null)
         {
-            Service.Log.Error($"Pathfinding task is in progress...");
+            Service.Log.Error("正在寻路中...");
             return false;
         }
 
-        Service.Log.Info($"Queueing {(fly ? "fly" : "move")}-to {dest:f3}");
-        _pendingTask = _manager.QueryPath(Service.ClientState.LocalPlayer?.Position ?? default, dest, fly);
+        Service.Log.Info($"准备 {(fly ? "飞行" : "步行")} 至 {dest:f3}");
+        _pendingTask = manager.QueryPath(Service.ClientState.LocalPlayer?.Position ?? default, dest, fly);
         _pendingFly = fly;
         return true;
     }

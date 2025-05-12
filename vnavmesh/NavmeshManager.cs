@@ -1,50 +1,53 @@
-﻿using Dalamud.Game.ClientState.Conditions;
-using FFXIVClientStructs.FFXIV.Client.LayoutEngine;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
+using Dalamud.Game.ClientState.Conditions;
+using FFXIVClientStructs.FFXIV.Client.LayoutEngine;
+using FFXIVClientStructs.FFXIV.Common.Component.BGCollision.Math;
+using Lumina.Excel.Sheets;
+using Action = System.Action;
 
 namespace Navmesh;
 
 // manager that loads navmesh matching current zone and performs async pathfinding queries
 public sealed class NavmeshManager : IDisposable
 {
-    public bool UseRaycasts = true;
+    public bool UseRaycasts      = true;
     public bool UseStringPulling = true;
 
-    public string CurrentKey { get; private set; } = ""; // unique string representing currently loaded navmesh
-    public Navmesh? Navmesh { get; private set; }
-    public NavmeshQuery? Query { get; private set; }
+    public string                                 CurrentKey { get; private set; } = "";
+    public Navmesh?                               Navmesh    { get; private set; }
+    public NavmeshQuery?                          Query      { get; private set; }
     public event Action<Navmesh?, NavmeshQuery?>? OnNavmeshChanged;
 
-    private volatile float _loadTaskProgress = -1;
-    public float LoadTaskProgress => _loadTaskProgress; // negative if load task is not running, otherwise in [0, 1] range
+    public           float LoadTaskProgress => loadTaskProgress; // negative if load task is not running, otherwise in [0, 1] range
+    private volatile float loadTaskProgress = -1;
+    private          int   loadTaskProgressBits;
 
-    private CancellationTokenSource? _currentCTS; // this is signalled when mesh is unloaded, all pathfinding tasks that use it are then cancelled
-    private Task _lastLoadQueryTask; // we limit the concurrency to max 1 running task (otherwise we'd need multiple Query objects, which aren't lightweight); note that each task completes on main thread!
+    private CancellationTokenSource? currentCTS;
+    private Task lastLoadQueryTask;
 
-    private int _numActivePathfinds;
-    public bool PathfindInProgress => _numActivePathfinds > 0;
-    public int NumQueuedPathfindRequests => _numActivePathfinds > 0 ? _numActivePathfinds - 1 : 0;
+    public  bool PathfindInProgress        => numActivePathfinds > 0;
+    public  int  NumQueuedPathfindRequests => numActivePathfinds > 0 ? numActivePathfinds - 1 : 0;
+    private int  numActivePathfinds;
 
-    private DirectoryInfo _cacheDir;
+    private readonly DirectoryInfo cacheDirectory;
 
     public NavmeshManager(DirectoryInfo cacheDir)
     {
-        _cacheDir = cacheDir;
-        cacheDir.Create(); // ensure directory exists
+        cacheDirectory = cacheDir;
+        cacheDir.Create();
 
-        // prepare a task with correct task scheduler that other tasks can be chained off
-        _lastLoadQueryTask = Service.Framework.Run(() => Log("Tasks kicked off"));
+        lastLoadQueryTask = Service.Framework.Run(() => Log("任务已启动"));
     }
 
     public void Dispose()
     {
-        Log("Disposing");
+        Log("正在释放资源");
         ClearState();
     }
 
@@ -53,18 +56,18 @@ public sealed class NavmeshManager : IDisposable
         var curKey = GetCurrentKey();
         if (curKey != CurrentKey)
         {
-            // navmesh needs to be reloaded
+            // 导航网格需要重新加载
             if (!Service.Config.AutoLoadNavmesh)
             {
                 if (CurrentKey.Length == 0)
-                    return; // nothing is loaded, and auto-load is forbidden
-                curKey = ""; // just unload existing mesh
+                    return;  // 未加载任何内容，且禁止自动加载
+                curKey = ""; // 仅卸载现有导航网格
             }
-            
+
             Log($"开始由 '{CurrentKey}' 转换至 '{curKey}'");
             CurrentKey = curKey;
             Reload(true);
-            // mesh load is now in progress
+            // 导航网格加载进行中
         }
     }
 
@@ -73,12 +76,12 @@ public sealed class NavmeshManager : IDisposable
         ClearState();
         if (CurrentKey.Length > 0)
         {
-            var cts = _currentCTS = new();
+            var cts = currentCTS = new();
             ExecuteWhenIdle(async cancel =>
             {
-                _loadTaskProgress = 0;
+                loadTaskProgress = 0;
 
-                using var resetLoadProgress = new OnDispose(() => _loadTaskProgress = -1);
+                using var resetLoadProgress = new OnDispose(() => loadTaskProgress = -1);
 
                 var waitStart = DateTime.Now;
 
@@ -87,8 +90,9 @@ public sealed class NavmeshManager : IDisposable
                     if ((DateTime.Now - waitStart).TotalSeconds >= 5)
                     {
                         waitStart = DateTime.Now;
-                        Log("waiting for cutscene");
+                        Log("等待过场动画结束");
                     }
+
                     await Service.Framework.DelayTicks(1, cancel);
                 }
 
@@ -100,180 +104,219 @@ public sealed class NavmeshManager : IDisposable
                     return (cacheKey, scene);
                 }, cancel);
 
-                Log($"Kicking off build for '{cacheKey}'");
-                var navmesh = await Task.Run(() => BuildNavmesh(scene, cacheKey, allowLoadFromCache, cancel), cancel);
-                Log($"Mesh loaded: '{cacheKey}'");
+                Log($"开始构建导航网格 '{cacheKey}'");
+                var navmesh = await Task.Run(async () => await BuildNavmeshAsync(scene, cacheKey, allowLoadFromCache, cancel), cancel);
+                Log($"导航网格加载完成: '{cacheKey}'");
+                
                 Navmesh = navmesh;
-                Query = new(Navmesh);
+                Query   = new(Navmesh);
                 OnNavmeshChanged?.Invoke(Navmesh, Query);
             }, cts.Token);
         }
+
         return true;
     }
 
     internal void ReplaceMesh(Navmesh mesh)
     {
-        Log($"Mesh replaced");
+        Log("导航网格已替换");
         Navmesh = mesh;
-        Query = new(Navmesh);
+        Query   = new(Navmesh);
         OnNavmeshChanged?.Invoke(Navmesh, Query);
     }
 
-    private static bool InCutscene => Service.Condition[ConditionFlag.WatchingCutscene] || Service.Condition[ConditionFlag.OccupiedInCutSceneEvent];
+    private static bool InCutscene => 
+        Service.Condition[ConditionFlag.WatchingCutscene] || Service.Condition[ConditionFlag.OccupiedInCutSceneEvent];
 
     public Task<List<Vector3>> QueryPath(Vector3 from, Vector3 to, bool flying, CancellationToken externalCancel = default)
     {
-        if (_currentCTS == null)
-            throw new Exception($"无法开始查询, 导航数据仍在构建过程中Can't initiate query - navmesh is not loaded");
+        if (currentCTS == null)
+            throw new Exception("无法开始查询, 导航数据仍在构建过程中");
 
-        // task can be cancelled either by internal request (i.e. when navmesh is reloaded) or external
-        var combined = CancellationTokenSource.CreateLinkedTokenSource(_currentCTS.Token, externalCancel);
-        ++_numActivePathfinds;
-        return ExecuteWhenIdle(async cancel =>
+        // 任务可以被内部请求（即当导航网格重新加载时）或外部取消
+        var combined = CancellationTokenSource.CreateLinkedTokenSource(currentCTS.Token, externalCancel);
+        ++numActivePathfinds;
+        return ExecuteWhenIdle(async _ =>
         {
-            using var autoDisposeCombined = combined;
-            using var autoDecrementCounter = new OnDispose(() => --_numActivePathfinds);
-            Log($"Kicking off pathfind from {from} to {to}");
+            using var autoDisposeCombined  = combined;
+            using var autoDecrementCounter = new OnDispose(() => --numActivePathfinds);
+            
+            Log($"启动从 {from} 到 {to} 的寻路");
             var path = await Task.Run(() =>
             {
                 combined.Token.ThrowIfCancellationRequested();
                 if (Query == null)
-                    throw new Exception($"Can't pathfind, navmesh did not build successfully");
-                Log($"Executing pathfind from {from} to {to}");
-                return flying ? Query.PathfindVolume(from, to, UseRaycasts, UseStringPulling, combined.Token) : Query.PathfindMesh(from, to, UseRaycasts, UseStringPulling, combined.Token);
+                    throw new Exception("无法寻路, 导航网格构建失败");
+                Log($"执行从 {from} 到 {to} 的寻路");
+                return flying
+                           ? Query.PathfindVolume(from, to, UseRaycasts, UseStringPulling, combined.Token)
+                           : Query.PathfindMesh(from, to, UseRaycasts, UseStringPulling, combined.Token);
             }, combined.Token);
-            Log($"Pathfinding done: {path.Count} waypoints");
+            Log($"寻路完成: {path.Count} 个路径点");
+            
             return path;
         }, combined.Token);
     }
 
-    // note: pixelSize should be power-of-2
-    public (Vector3 min, Vector3 max) BuildBitmap(Vector3 startingPos, string filename, float pixelSize)
+    // 注意: pixelSize 应为 2 的幂次方
+    public (Vector3 min, Vector3 max) BuildBitmap(Vector3 startingPos, string filename, float pixelSize, AABB? mapBounds = null)
     {
         if (Navmesh == null || Query == null)
-            throw new InvalidOperationException($"Can't build bitmap - navmesh creation is in progress");
+            throw new InvalidOperationException("无法构建位图, 正在创建导航信息");
 
-        var startPoly = Query.FindNearestMeshPoly(startingPos);
+        var startPoly      = Query.FindNearestMeshPoly(startingPos);
         var reachablePolys = Query.FindReachableMeshPolys(startPoly);
+
+        HashSet<long> polysInbounds = [];
 
         Vector3 min = new(1024), max = new(-1024);
         foreach (var p in reachablePolys)
         {
             Navmesh.Mesh.GetTileAndPolyByRefUnsafe(p, out var tile, out var poly);
-            for (int i = 0; i < poly.vertCount; ++i)
+            for (var i = 0; i < poly.vertCount; ++i)
             {
                 var v = NavmeshBitmap.GetVertex(tile, poly.verts[i]);
+                if (!inBounds(v))
+                    goto cont;
+
                 min = Vector3.Min(min, v);
                 max = Vector3.Max(max, v);
-                //Service.Log.Debug($"{p:X}.{i}= {v}");
             }
+
+            polysInbounds.Add(p);
+
+            cont: ;
         }
-        //Service.Log.Debug($"bounds: {min}-{max}");
 
         var bitmap = new NavmeshBitmap(min, max, pixelSize);
-        foreach (var p in reachablePolys)
-        {
-            bitmap.RasterizePolygon(Navmesh.Mesh, p);
-        }
+        foreach (var p in polysInbounds) bitmap.RasterizePolygon(Navmesh.Mesh, p);
         bitmap.Save(filename);
-        Service.Log.Debug($"Generated nav bitmap '{filename}' @ {startingPos}: {bitmap.MinBounds}-{bitmap.MaxBounds}");
+        Service.Log.Debug($"生成导航位图 '{filename}' @ {startingPos}: {bitmap.MinBounds}-{bitmap.MaxBounds}");
         return (bitmap.MinBounds, bitmap.MaxBounds);
+
+        bool inBounds(Vector3 vert) =>
+            mapBounds is not { } aabb || (vert.X >= aabb.Min.X && vert.Y >= aabb.Min.Y && vert.Z >= aabb.Min.Z && vert.X <= aabb.Max.X &&
+                                          vert.Y <= aabb.Max.Y && vert.Z <= aabb.Max.Z);
     }
 
-    // if non-empty string is returned, active layout is ready
-    private unsafe string GetCurrentKey()
+    private static unsafe string GetCurrentKey()
     {
         var layout = LayoutWorld.Instance()->ActiveLayout;
         if (layout == null || layout->InitState != 7 || layout->FestivalStatus is > 0 and < 5)
-            return ""; // layout not ready
+            return ""; // 场景布局尚未就绪
 
-        var filter = LayoutUtils.FindFilter(layout);
+        var filter    = LayoutUtils.FindFilter(layout);
         var filterKey = filter != null ? filter->Key : 0;
-        var terrRow = Service.LuminaRow<Lumina.Excel.Sheets.TerritoryType>(filter != null ? filter->TerritoryTypeId : layout->TerritoryTypeId);
+        var terrRow   = Service.LuminaRow<TerritoryType>(filter != null ? filter->TerritoryTypeId : layout->TerritoryTypeId);
         return $"{terrRow?.Bg}//{filterKey:X}//{LayoutUtils.FestivalsString(layout->ActiveFestivals)}";
     }
 
-    private unsafe string GetCacheKey(SceneDefinition scene)
+    internal static unsafe string GetCacheKey(SceneDefinition scene)
     {
-        // note: festivals are active globally, but majority of zones don't have festival-specific layers, so we only want real ones in the cache key
-        var layout = LayoutWorld.Instance()->ActiveLayout;
-        var filter = LayoutUtils.FindFilter(layout);
+        // 注意: 节日活动在全局范围内激活，但大多数区域没有特定节日的图层，所以我们只在缓存键中包含真实存在的图层
+        var layout    = LayoutWorld.Instance()->ActiveLayout;
+        var filter    = LayoutUtils.FindFilter(layout);
         var filterKey = filter != null ? filter->Key : 0;
-        var terrRow = Service.LuminaRow<Lumina.Excel.Sheets.TerritoryType>(filter != null ? filter->TerritoryTypeId : layout->TerritoryTypeId);
+        var terrRow   = Service.LuminaRow<TerritoryType>(filter != null ? filter->TerritoryTypeId : layout->TerritoryTypeId);
         return $"{terrRow?.Bg.ToString().Replace('/', '_')}__{filterKey:X}__{string.Join('.', scene.FestivalLayers.Select(id => id.ToString("X")))}";
     }
 
     private void ClearState()
     {
-        if (_currentCTS == null)
-            return; // already cleared
+        if (currentCTS == null)
+            return; // 已经清理完毕
 
-        var cts = _currentCTS;
-        _currentCTS = null;
+        var cts = currentCTS;
+        currentCTS = null;
         cts.Cancel();
-        Log("Queueing state clear");
+        Log("正在队列中等待清理状态");
         ExecuteWhenIdle(() =>
         {
-            Log("Clearing state");
-            _numActivePathfinds = 0;
+            Log("正在清理状态");
+            numActivePathfinds = 0;
             cts.Dispose();
             OnNavmeshChanged?.Invoke(null, null);
-            Query = null;
+            Query   = null;
             Navmesh = null;
-        }, default);
+        }, CancellationToken.None);
     }
 
-    private Navmesh BuildNavmesh(SceneDefinition scene, string cacheKey, bool allowLoadFromCache, CancellationToken cancel)
+    private async Task<Navmesh> BuildNavmeshAsync(SceneDefinition scene, string cacheKey, bool allowLoadFromCache, CancellationToken cancel)
     {
-        Log($"Build task started: '{cacheKey}'");
+        Log($"异步构建任务开始: '{cacheKey}'");
         var customization = NavmeshCustomizationRegistry.ForTerritory(scene.TerritoryID);
 
-        // try reading from cache
-        var cache = new FileInfo($"{_cacheDir.FullName}/{cacheKey}.navmesh");
-        if (allowLoadFromCache && cache.Exists)
+        // 尝试读取缓存
+        var cachePath = $"{cacheDirectory.FullName}/{cacheKey}.navmesh";
+        if (allowLoadFromCache && File.Exists(cachePath))
         {
-            try
-            {
-                Log($"加载缓存: {cache.FullName}");
-                using var stream = cache.OpenRead();
-                using var reader = new BinaryReader(stream);
-                return Navmesh.Deserialize(reader, customization.Version);
-            }
-            catch (Exception ex)
-            {
-                Log($"加载缓存失败: {ex}");
-            }
+            var navmesh = await LoadFromCacheAsync(cachePath, customization.Version, cancel);
+            if (navmesh != null) return navmesh;
         }
+
         cancel.ThrowIfCancellationRequested();
 
-        // cache doesn't exist or can't be used for whatever reason - build navmesh from scratch
-        // TODO: we can build multiple tiles concurrently
-        var builder = new NavmeshBuilder(scene, customization);
+        var builder       = new NavmeshBuilder(scene, customization);
         var deltaProgress = 1.0f / (builder.NumTilesX * builder.NumTilesZ);
-        for (int z = 0; z < builder.NumTilesZ; ++z)
-        {
-            for (int x = 0; x < builder.NumTilesX; ++x)
-            {
-                builder.BuildTile(x, z);
-                _loadTaskProgress += deltaProgress;
-                cancel.ThrowIfCancellationRequested();
-            }
-        }
 
-        // write results to cache
+        loadTaskProgress = 0;
+        Interlocked.Exchange(ref loadTaskProgressBits, BitConverter.SingleToInt32Bits(0f));
+
+        var parallelOptions = new ParallelOptions
         {
-            Service.Log.Debug($"写入缓存: {cache.FullName}");
-            using var stream = cache.Open(FileMode.Create, FileAccess.Write, FileShare.None);
-            using var writer = new BinaryWriter(stream);
-            builder.Navmesh.Serialize(writer);
-        }
+            CancellationToken      = cancel,
+            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1)
+        };
+
+        var tileTasks = new List<(int X, int Z)>();
+        for (var z = 0; z < builder.NumTilesZ; ++z)
+        for (var x = 0; x < builder.NumTilesX; ++x)
+            tileTasks.Add((x, z));
+
+        await Task.Run(() =>
+        {
+            Parallel.ForEach(tileTasks, parallelOptions, tile =>
+            {
+                builder.BuildTile(tile.X, tile.Z);
+
+                UpdateProgressAtomically(deltaProgress);
+
+                cancel.ThrowIfCancellationRequested();
+            });
+        }, cancel);
+
+        // 异步写入缓存
+        await WriteToCacheAsync(builder.Navmesh, cachePath, cancel);
+
         return builder.Navmesh;
     }
 
+    private void UpdateProgressAtomically(float deltaProgress)
+    {
+        while (true)
+        {
+            var currentBits  = Interlocked.CompareExchange(ref loadTaskProgressBits, 0, 0);
+            var currentValue = BitConverter.Int32BitsToSingle(currentBits);
+
+            var newValue = currentValue + deltaProgress;
+
+            // 尝试原子更新
+            var newBits = BitConverter.SingleToInt32Bits(newValue);
+            if (Interlocked.CompareExchange(ref loadTaskProgressBits, newBits, currentBits) == currentBits)
+            {
+                loadTaskProgress = newValue;
+                break;
+            }
+        }
+    }
+
+    private Navmesh BuildNavmesh(SceneDefinition scene, string cacheKey, bool allowLoadFromCache, CancellationToken cancel) =>
+        BuildNavmeshAsync(scene, cacheKey, allowLoadFromCache, cancel).GetAwaiter().GetResult();
+
     private void ExecuteWhenIdle(Action task, CancellationToken token)
     {
-        var prev = _lastLoadQueryTask;
-        _lastLoadQueryTask = Service.Framework.Run(async () =>
+        var prev = lastLoadQueryTask;
+        lastLoadQueryTask = Service.Framework.Run(async () =>
         {
             await prev.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing | ConfigureAwaitOptions.ContinueOnCapturedContext);
             _ = prev.Exception;
@@ -283,8 +326,8 @@ public sealed class NavmeshManager : IDisposable
 
     private void ExecuteWhenIdle(Func<CancellationToken, Task> task, CancellationToken token)
     {
-        var prev = _lastLoadQueryTask;
-        _lastLoadQueryTask = Service.Framework.Run(async () =>
+        var prev = lastLoadQueryTask;
+        lastLoadQueryTask = Service.Framework.Run(async () =>
         {
             await prev.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing | ConfigureAwaitOptions.ContinueOnCapturedContext);
             _ = prev.Exception;
@@ -296,7 +339,7 @@ public sealed class NavmeshManager : IDisposable
 
     private Task<T> ExecuteWhenIdle<T>(Func<CancellationToken, Task<T>> task, CancellationToken token)
     {
-        var prev = _lastLoadQueryTask;
+        var prev = lastLoadQueryTask;
         var res = Service.Framework.Run(async () =>
         {
             await prev.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing | ConfigureAwaitOptions.ContinueOnCapturedContext);
@@ -306,14 +349,47 @@ public sealed class NavmeshManager : IDisposable
             LogTaskError(t);
             return t.Result;
         }, token);
-        _lastLoadQueryTask = res;
+        lastLoadQueryTask = res;
         return res;
     }
 
-    private static void Log(string message) => Service.Log.Debug($"[NavmeshManager] [{Thread.CurrentThread.ManagedThreadId}] {message}");
+    private static void Log(string message) => 
+        Service.Log.Debug($"[NavmeshManager] [{Environment.CurrentManagedThreadId}] {message}");
+
     private static void LogTaskError(Task task)
     {
         if (task.IsFaulted)
-            Service.Log.Error($"[NavmeshManager] Task failed with error: {task.Exception}");
+            Service.Log.Error($"[NavmeshManager] 任务执行失败: {task.Exception}");
+    }
+
+    private static async Task<Navmesh?> LoadFromCacheAsync(string cachePath, int version, CancellationToken cancel)
+    {
+        try
+        {
+            Log($"异步加载缓存: {cachePath}");
+            await using var stream = new FileStream(cachePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true);
+            using var reader = new BinaryReader(stream);
+            return await Task.Run(() => Navmesh.Deserialize(reader, version), cancel);
+        }
+        catch (Exception ex)
+        {
+            Log($"异步加载缓存失败: {ex}");
+            return null;
+        }
+    }
+
+    private static async Task WriteToCacheAsync(Navmesh navmesh, string cachePath, CancellationToken cancel)
+    {
+        try
+        {
+            Log($"异步写入缓存: {cachePath}");
+            await using var stream = new FileStream(cachePath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true);
+            await using var writer = new BinaryWriter(stream);
+            await Task.Run(() => navmesh.Serialize(writer), cancel);
+        }
+        catch (Exception ex)
+        {
+            Log($"异步写入缓存失败: {ex}");
+        }
     }
 }
