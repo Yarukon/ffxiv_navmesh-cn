@@ -1,7 +1,7 @@
 ﻿namespace Navmesh.Customizations;
 
 [CustomizationTerritory(134)]
-public class Z134MiddleLaNoscea : NavmeshCustomization
+public class Z0134MiddleLaNoscea : NavmeshCustomization
 {
     public override int Version => 1;
 
