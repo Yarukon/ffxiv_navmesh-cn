@@ -30,7 +30,7 @@ public class DTRProvider : IDisposable
             var status = loadProgress >= 0 ? $"{loadProgress * 100:f0}%" : _manager.Navmesh != null ? "就绪" : "未就绪";
             if (_asyncMove.TaskInProgress)
                 status = "寻路中";
-            _dtrBarEntry.Text = "导航状态: " + status;
+            _dtrBarEntry.Text = "导航: " + status;
         }
     }
 }
