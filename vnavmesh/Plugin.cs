@@ -1,13 +1,10 @@
-using Dalamud.Common;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Navmesh.Movement;
 using System;
-using System.IO;
 using System.Numerics;
-using System.Reflection;
 
 namespace Navmesh;
 

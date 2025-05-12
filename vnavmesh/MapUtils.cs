@@ -12,10 +12,10 @@ public static class MapUtils
         return q.FindPointOnFloor(new(flag.Value.X, 1024, flag.Value.Y));
     }
 
-    private unsafe static Vector2? GetFlagPosition()
+    private static unsafe Vector2? GetFlagPosition()
     {
         var map = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentMap.Instance();
-        if (map == null || !map->IsFlagMarkerSet)
+        if (map == null || map->IsFlagMarkerSet != 1)
             return null;
         var marker = map->FlagMapMarker;
         return new(marker.XFloat, marker.YFloat);
