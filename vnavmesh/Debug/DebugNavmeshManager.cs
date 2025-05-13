@@ -111,15 +111,15 @@ internal class DebugNavmeshManager : IDisposable
             ImGui.Text("移动:");
             
             ImGui.SameLine();
-            if (ImGui.Button("步行至目的地"))
+            if (ImGui.Button("步行"))
                 AsyncMove.MoveTo(TargetPos, false);
 
             ImGui.SameLine();
-            if (ImGui.Button("飞行至目的地"))
+            if (ImGui.Button("飞行"))
                 AsyncMove.MoveTo(TargetPos, true);
 
             ImGui.SameLine();
-            if (ImGui.Button("停止移动"))
+            if (ImGui.Button("停止"))
                 FollowPath.Stop();
         }
         
