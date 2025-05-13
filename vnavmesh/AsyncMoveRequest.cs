@@ -6,20 +6,45 @@ using Navmesh.Movement;
 
 namespace Navmesh;
 
+/// <summary>
+///     管理异步寻路请求的类，处理路径计算和跟随逻辑
+/// </summary>
 public class AsyncMoveRequest : IDisposable
 {
+    #region 私有字段
+
     private readonly NavmeshManager NavmeshManager;
     private readonly FollowPath     FollowPath;
-    
+
     private Task<List<Vector3>>? PendingTask;
     private bool                 PendingFly;
     private int                  RecalculationAttempts;
-    
+
     private const int MaxRecalculationAttempts = 5;
 
-    public bool TaskInProgress => PendingTask != null;
-    public bool TaskInBusy     => PendingTask is { IsCompleted: false };
+    #endregion
 
+    #region 公共属性
+
+    /// <summary>
+    ///     是否有任务（进行中或已完成）
+    /// </summary>
+    public bool TaskInProgress => PendingTask != null;
+
+    /// <summary>
+    ///     是否有正在进行但尚未完成的任务
+    /// </summary>
+    public bool TaskInBusy => PendingTask is { IsCompleted: false };
+
+    #endregion
+
+    #region 构造和释放
+
+    /// <summary>
+    ///     初始化异步移动请求处理器
+    /// </summary>
+    /// <param name="manager">导航网格管理器</param>
+    /// <param name="follow">路径跟随器</param>
     public AsyncMoveRequest(NavmeshManager manager, FollowPath follow)
     {
         NavmeshManager = manager;
@@ -28,6 +53,9 @@ public class AsyncMoveRequest : IDisposable
         FollowPath.RequestPathRecalculation += OnRequestPathRecalculation;
     }
 
+    /// <summary>
+    ///     释放资源，取消订阅事件，并等待任何进行中的任务完成
+    /// </summary>
     public void Dispose()
     {
         FollowPath.RequestPathRecalculation -= OnRequestPathRecalculation;
@@ -36,12 +64,19 @@ public class AsyncMoveRequest : IDisposable
         {
             if (!PendingTask.IsCompleted)
                 PendingTask.Wait();
-            
+
             PendingTask.Dispose();
             PendingTask = null;
         }
     }
 
+    #endregion
+
+    #region 公共方法
+
+    /// <summary>
+    ///     更新异步寻路状态，检查并处理已完成的路径计算
+    /// </summary>
     public void Update()
     {
         if (PendingTask is { IsCompleted: true })
@@ -75,6 +110,12 @@ public class AsyncMoveRequest : IDisposable
         }
     }
 
+    /// <summary>
+    ///     发起移动到指定目标位置的请求
+    /// </summary>
+    /// <param name="dest">目标位置</param>
+    /// <param name="fly">是否允许飞行</param>
+    /// <returns>请求是否成功发起</returns>
     public bool MoveTo(Vector3 dest, bool fly)
     {
         if (PendingTask != null)
@@ -84,13 +125,63 @@ public class AsyncMoveRequest : IDisposable
         }
 
         Service.Log.Info($"准备 {(fly ? "飞行" : "步行")} 至 {dest:f3}");
-        
+
         PendingTask = NavmeshManager.QueryPath(Service.ClientState.LocalPlayer?.Position ?? default, dest, fly);
         PendingFly  = fly;
-        
+
         return true;
     }
 
+    /// <summary>
+    ///     取消当前正在进行的寻路计算
+    /// </summary>
+    /// <returns>是否成功取消了一个正在进行的寻路任务</returns>
+    public bool CancelPathfinding()
+    {
+        if (!TaskInProgress)
+            return false;
+
+        Service.Log.Information("取消当前寻路任务");
+
+        FollowPath.Stop();
+        if (PendingTask != null)
+        {
+            var task = PendingTask;
+            PendingTask = null;
+
+            if (task.IsCompleted)
+            {
+                try
+                {
+                    task.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    Service.Log.Error($"清理寻路任务时发生错误: {ex.Message}");
+                }
+            }
+            else
+            {
+                Service.Log.Warning("丢弃了未完成的寻路任务");
+            }
+        }
+
+        RecalculationAttempts = 0;
+        PendingFly            = false;
+
+        return true;
+    }
+
+    #endregion
+
+    #region 私有方法
+
+    /// <summary>
+    ///     处理路径重新计算请求的回调方法
+    /// </summary>
+    /// <param name="currentPos">当前位置</param>
+    /// <param name="targetPos">目标位置</param>
+    /// <param name="ignoreDeltaY">是否忽略Y轴差异（地面行走）</param>
     private void OnRequestPathRecalculation(Vector3 currentPos, Vector3 targetPos, bool ignoreDeltaY)
     {
         if (TaskInBusy)
@@ -101,7 +192,7 @@ public class AsyncMoveRequest : IDisposable
 
         RecalculationAttempts++;
 
-        if (RecalculationAttempts > MaxRecalculationAttempts) 
+        if (RecalculationAttempts > MaxRecalculationAttempts)
             Service.Log.Warning($"多次路径重新计算尝试 (尝试次数: {RecalculationAttempts})");
 
         Service.Log.Info($"开始重新计算路径 (第{RecalculationAttempts}次尝试): 从 {currentPos:f2} 到 {targetPos:f2}, {(ignoreDeltaY ? "地面行走" : "立体行走/飞行")}");
@@ -110,4 +201,6 @@ public class AsyncMoveRequest : IDisposable
         PendingTask = NavmeshManager.QueryPath(currentPos, targetPos, fly);
         PendingFly  = fly;
     }
+
+    #endregion
 }
