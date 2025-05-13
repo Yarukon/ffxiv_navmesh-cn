@@ -1,143 +1,176 @@
-﻿using ImGuiNET;
+﻿using System;
+using System.Numerics;
+using Dalamud.Interface.Utility.Raii;
+using ImGuiNET;
 using Navmesh.Movement;
 using Navmesh.NavVolume;
-using System;
-using System.Numerics;
 
 namespace Navmesh.Debug;
 
-class DebugNavmeshManager : IDisposable
+internal class DebugNavmeshManager : IDisposable
 {
-    private NavmeshManager _manager;
-    private FollowPath _path;
-    private AsyncMoveRequest _asyncMove;
-    private DTRProvider _dtr;
-    private UITree _tree = new();
-    private DebugDrawer _dd;
-    private DebugGameCollision _coll;
-    private FollowPath _followPath;
-    private Vector3 targetPos;
+    private bool IsMeshQueryReady => NavmeshManager is { Navmesh: not null, Query: not null };
+    
+    private readonly UITree UITree = new();
+    
+    private readonly NavmeshManager   NavmeshManager;
+    private readonly FollowPath       FollowPath;
+    private readonly AsyncMoveRequest AsyncMove;
+    private readonly DebugDrawer      DebugDrawer;
+    
+    private DebugDetourNavmesh? DrawNavmesh;
+    private DebugVoxelMap?      DrawVoxelMap;
+    
+    private Vector3 TargetPos;
 
-    private DebugDetourNavmesh? _drawNavmesh;
-    private DebugVoxelMap? _debugVoxelMap;
-
-    public DebugNavmeshManager(DebugDrawer dd, DebugGameCollision coll, NavmeshManager manager, FollowPath path, AsyncMoveRequest move, DTRProvider dtr, FollowPath followPath)
+    public DebugNavmeshManager(DebugDrawer dd, NavmeshManager manager, FollowPath path, AsyncMoveRequest move)
     {
-        _manager                  =  manager;
-        _path                     =  path;
-        _asyncMove                =  move;
-        _dtr                      =  dtr;
-        _dd                       =  dd;
-        _coll                     =  coll;
-        _followPath               =  followPath;
-        _manager.OnNavmeshChanged += OnNavmeshChanged;
+        NavmeshManager = manager;
+        FollowPath     = path;
+        AsyncMove      = move;
+        DebugDrawer    = dd;
+        
+        NavmeshManager.OnNavmeshChanged += OnNavmeshChanged;
     }
 
     public void Dispose()
     {
-        _manager.OnNavmeshChanged -= OnNavmeshChanged;
-        _drawNavmesh?.Dispose();
-        _debugVoxelMap?.Dispose();
+        NavmeshManager.OnNavmeshChanged -= OnNavmeshChanged;
+        DrawNavmesh?.Dispose();
+        DrawVoxelMap?.Dispose();
     }
 
     public void Draw()
     {
-        var progress = _manager.LoadTaskProgress;
-        if (progress >= 0)
+        var player    = Service.ClientState.LocalPlayer;
+        var playerPos = player?.Position ?? default;
+        
+        ImGui.Text($"当前区域: {NavmeshManager.CurrentKey}");
+
+        using (ImRaii.PushIndent())
         {
-            ImGui.ProgressBar(progress, new(200, 0));
-        }
-        else
-        {
-            ImGui.SetNextItemWidth(100);
-            if (ImGui.Button("重载"))
-                _manager.Reload(true);
-            ImGui.SameLine();
-            if (ImGui.Button("重构"))
-                _manager.Reload(false);
+            var progress = NavmeshManager.LoadTaskProgress;
+            if (progress >= 0)
+                ImGui.ProgressBar(progress, new(200, 0));
+            else
+            {
+                if (ImGui.Button("重载"))
+                    NavmeshManager.Reload(true);
+
+                ImGui.SameLine();
+                if (ImGui.Button("重构"))
+                    NavmeshManager.Reload(false);
+
+                if (IsMeshQueryReady)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.Button("导出位图"))
+                        ExportBitmap(NavmeshManager.Navmesh!, NavmeshManager.Query!, playerPos);
+                }
+            }
         }
         
-        ImGui.SameLine();
-        ImGui.TextUnformatted(_manager.CurrentKey);
-        ImGui.TextUnformatted($"寻路任务:\n计算中: {(_manager.PathfindInProgress ? 1 : 0)} 排队中: {_manager.NumQueuedPathfindRequests}");
-
-        if (_manager.Navmesh == null || _manager.Query == null)
-            return;
-
         ImGui.NewLine();
         
-        var player = Service.ClientState.LocalPlayer;
-        var playerPos = player?.Position ?? default;
-        ImGui.TextUnformatted($"玩家位置: {playerPos:F1} / 目的地: {targetPos:F1}");
-        
-        ImGui.AlignTextToFramePadding();
-        ImGui.Text("设定目的地:");
-        
-        ImGui.SameLine();
-        if (ImGui.Button("当前位置"))
-            targetPos = player?.Position ?? default;
-        
-        ImGui.SameLine();
-        if (ImGui.Button("选中目标位置"))
-            targetPos = player?.TargetObject?.Position ?? default;
-        
-        ImGui.SameLine();
-        if (ImGui.Button("地图标点位置"))
-            targetPos = MapUtils.FlagToPoint(_manager.Query) ?? default;
+        ImGui.Text("寻路任务");
 
-        if (ImGui.Button("导出位图"))
-            ExportBitmap(_manager.Navmesh, _manager.Query, playerPos);
+        using (ImRaii.PushIndent())
+        {
+            ImGui.Text($"计算中: {(NavmeshManager.PathfindInProgress ? 1 : 0)}");
+            ImGui.Text($"排队中: {NavmeshManager.NumQueuedPathfindRequests}");
+        }
 
-        ImGui.Checkbox("允许导航过程中手动干预移动", ref _path.MovementAllowed);
-        ImGui.Checkbox("使用光线投射算法", ref _manager.UseRaycasts);
-        ImGui.Checkbox("使用拉绳算法", ref _manager.UseStringPulling);
+        if (!IsMeshQueryReady)
+            return;
         
-        if (ImGui.Button("步行至目的地"))
-            _asyncMove.MoveTo(targetPos, false);
+        ImGui.NewLine();
         
-        ImGui.SameLine();
-        if (ImGui.Button("飞行至目的地"))
-            _asyncMove.MoveTo(targetPos, true);
+        ImGui.Text("手动寻路");
+
+        using (ImRaii.PushIndent())
+        {
+            ImGui.Text($"玩家位置: {playerPos:F1}");
+            ImGui.Text($"目的地: {TargetPos:F1}");
+            
+            ImGui.AlignTextToFramePadding();
+            ImGui.Text("设定:");
+            
+            ImGui.SameLine();
+            if (ImGui.Button("当前位置"))
+                TargetPos = player?.Position ?? default;
+
+            ImGui.SameLine();
+            if (ImGui.Button("选中目标位置"))
+                TargetPos = player?.TargetObject?.Position ?? default;
+
+            ImGui.SameLine();
+            if (ImGui.Button("地图标点位置"))
+                TargetPos = MapUtils.FlagToPoint(NavmeshManager.Query!) ?? default;
+            
+            ImGui.AlignTextToFramePadding();
+            ImGui.Text("移动:");
+            
+            ImGui.SameLine();
+            if (ImGui.Button("步行至目的地"))
+                AsyncMove.MoveTo(TargetPos, false);
+
+            ImGui.SameLine();
+            if (ImGui.Button("飞行至目的地"))
+                AsyncMove.MoveTo(TargetPos, true);
+
+            ImGui.SameLine();
+            if (ImGui.Button("停止移动"))
+                FollowPath.Stop();
+        }
         
-        ImGui.SameLine();
-        if (ImGui.Button("停止移动"))
-            _followPath.Stop();
+        ImGui.NewLine();
         
+        ImGui.Text("临时设置");
+
+        using (ImRaii.PushIndent())
+        {
+            ImGui.Checkbox("允许导航过程中手动干预移动", ref FollowPath.MovementAllowed);
+            ImGui.Checkbox("使用光线投射算法",      ref NavmeshManager.UseRaycasts);
+            ImGui.Checkbox("使用拉绳算法",        ref NavmeshManager.UseStringPulling);
+        }
+
         ImGui.NewLine();
 
         DrawPosition("玩家", playerPos);
-        DrawPosition("目标", targetPos);
-        DrawPosition("标点", MapUtils.FlagToPoint(_manager.Query) ?? default);
-        DrawPosition("地面", _manager.Query.FindPointOnFloor(playerPos) ?? default);
+        DrawPosition("目标", TargetPos);
+        DrawPosition("标点", MapUtils.FlagToPoint(NavmeshManager.Query!)       ?? default);
+        DrawPosition("地面", NavmeshManager.Query!.FindPointOnFloor(playerPos) ?? default);
 
-        _drawNavmesh ??= new(_manager.Navmesh.Mesh, _manager.Query.MeshQuery, _manager.Query.LastPath, _tree, _dd);
-        _drawNavmesh.Draw();
-        if (_manager.Navmesh.Volume != null)
+        DrawNavmesh ??= 
+            new(NavmeshManager.Navmesh!.Mesh, NavmeshManager.Query.MeshQuery, NavmeshManager.Query.LastPath, UITree, DebugDrawer);
+        DrawNavmesh.Draw();
+        
+        if (NavmeshManager.Navmesh!.Volume != null)
         {
-            _debugVoxelMap ??= new(_manager.Navmesh.Volume, _manager.Query.VolumeQuery, _tree, _dd);
-            _debugVoxelMap.Draw();
+            DrawVoxelMap ??= new(NavmeshManager.Navmesh.Volume, NavmeshManager.Query.VolumeQuery, UITree, DebugDrawer);
+            DrawVoxelMap.Draw();
         }
     }
 
     private void DrawPosition(string tag, Vector3 position)
     {
-        _manager.Navmesh!.Mesh.CalcTileLoc(position.SystemToRecast(), out var tileX, out var tileZ);
-        _tree.LeafNode($"{tag} 位置: {position:f3}, 格: {tileX}x{tileZ}, poly: {_manager.Query!.FindNearestMeshPoly(position):X}");
-        var voxel = _manager.Query.FindNearestVolumeVoxel(position);
-        if (_tree.LeafNode($"{tag} 体素: {voxel:X}###{tag}voxel").SelectedOrHovered && voxel != VoxelMap.InvalidVoxel)
-            _debugVoxelMap?.VisualizeVoxel(voxel);
+        NavmeshManager.Navmesh!.Mesh.CalcTileLoc(position.SystemToRecast(), out var tileX, out var tileZ);
+        UITree.LeafNode($"{tag} 位置: {position:f3}, 格: {tileX}x{tileZ}, poly: {NavmeshManager.Query!.FindNearestMeshPoly(position):X}");
+        
+        var voxel = NavmeshManager.Query.FindNearestVolumeVoxel(position);
+        if (UITree.LeafNode($"{tag} 体素: {voxel:X}###{tag}voxel").SelectedOrHovered && voxel != VoxelMap.InvalidVoxel)
+            DrawVoxelMap?.VisualizeVoxel(voxel);
     }
 
-    private void ExportBitmap(Navmesh navmesh, NavmeshQuery query, Vector3 startingPos)
-    {
-        _manager.BuildBitmap(startingPos, "D:\\navmesh.bmp", 0.5f);
-    }
+    private void ExportBitmap(Navmesh navmesh, NavmeshQuery query, Vector3 startingPos) => 
+        NavmeshManager.BuildBitmap(startingPos, "D:\\navmesh.bmp", 0.5f);
 
     private void OnNavmeshChanged(Navmesh? navmesh, NavmeshQuery? query)
     {
-        _drawNavmesh?.Dispose();
-        _drawNavmesh = null;
-        _debugVoxelMap?.Dispose();
-        _debugVoxelMap = null;
+        DrawNavmesh?.Dispose();
+        DrawNavmesh = null;
+        
+        DrawVoxelMap?.Dispose();
+        DrawVoxelMap = null;
     }
 }

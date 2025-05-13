@@ -18,12 +18,12 @@ public class MainWindow : Window, IDisposable
 
     public MainWindow(NavmeshManager manager, FollowPath path, AsyncMoveRequest move, DTRProvider dtr, FollowPath followPath, string configDir) : base("Navmesh")
     {
-        _path = path;
-        _configDirectory = configDir;
-        _debugGameColl = new(_dd);
-        _debugNavmeshManager = new(_dd, _debugGameColl, manager, path, move, dtr, followPath);
-        _debugNavmeshCustom = new(_dd, _debugGameColl, manager, _configDirectory);
-        _debugLayout = new(_debugGameColl);
+        _path                = path;
+        _configDirectory     = configDir;
+        _debugGameColl       = new(_dd);
+        _debugNavmeshManager = new(_dd, manager, path, move);
+        _debugNavmeshCustom  = new(_dd, _debugGameColl, manager, _configDirectory);
+        _debugLayout         = new(_debugGameColl);
     }
 
     public void Dispose()
