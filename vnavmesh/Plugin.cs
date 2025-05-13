@@ -72,7 +72,6 @@ public sealed class Plugin : IDalamudPlugin
         };
         
         Service.CommandManager.AddHandler("/vnav", cmd);
-        Service.CommandManager.AddHandler("/vnavmesh", new CommandInfo(OnCommand) { HelpMessage = cmd.HelpMessage, ShowInHelp = false }); // legacy
 
         Service.Framework.Update += OnUpdate;
     }
@@ -82,7 +81,6 @@ public sealed class Plugin : IDalamudPlugin
         Service.Framework.Update -= OnUpdate;
 
         Service.CommandManager.RemoveHandler("/vnav");
-        Service.CommandManager.RemoveHandler("/vnavmesh");
         
         Service.PluginInterface.UiBuilder.Draw -= Draw;
         WindowSystem.RemoveAllWindows();
