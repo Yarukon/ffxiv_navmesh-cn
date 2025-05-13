@@ -15,19 +15,21 @@ class DebugNavmeshManager : IDisposable
     private UITree _tree = new();
     private DebugDrawer _dd;
     private DebugGameCollision _coll;
+    private FollowPath _followPath;
     private Vector3 targetPos;
 
     private DebugDetourNavmesh? _drawNavmesh;
     private DebugVoxelMap? _debugVoxelMap;
 
-    public DebugNavmeshManager(DebugDrawer dd, DebugGameCollision coll, NavmeshManager manager, FollowPath path, AsyncMoveRequest move, DTRProvider dtr)
+    public DebugNavmeshManager(DebugDrawer dd, DebugGameCollision coll, NavmeshManager manager, FollowPath path, AsyncMoveRequest move, DTRProvider dtr, FollowPath followPath)
     {
-        _manager = manager;
-        _path = path;
-        _asyncMove = move;
-        _dtr = dtr;
-        _dd = dd;
-        _coll = coll;
+        _manager                  =  manager;
+        _path                     =  path;
+        _asyncMove                =  move;
+        _dtr                      =  dtr;
+        _dd                       =  dd;
+        _coll                     =  coll;
+        _followPath               =  followPath;
         _manager.OnNavmeshChanged += OnNavmeshChanged;
     }
 
@@ -57,7 +59,7 @@ class DebugNavmeshManager : IDisposable
         
         ImGui.SameLine();
         ImGui.TextUnformatted(_manager.CurrentKey);
-        ImGui.TextUnformatted($"寻路任务:\n正在执行: {(_manager.PathfindInProgress ? 1 : 0)} 正在排队: {_manager.NumQueuedPathfindRequests}");
+        ImGui.TextUnformatted($"寻路任务:\n计算中: {(_manager.PathfindInProgress ? 1 : 0)} 排队中: {_manager.NumQueuedPathfindRequests}");
 
         if (_manager.Navmesh == null || _manager.Query == null)
             return;
@@ -67,13 +69,20 @@ class DebugNavmeshManager : IDisposable
         var player = Service.ClientState.LocalPlayer;
         var playerPos = player?.Position ?? default;
         ImGui.TextUnformatted($"玩家位置: {playerPos:F1} / 目的地: {targetPos:F1}");
-        if (ImGui.Button("目的地: 当前位置"))
+        
+        ImGui.AlignTextToFramePadding();
+        ImGui.Text("设定目的地:");
+        
+        ImGui.SameLine();
+        if (ImGui.Button("当前位置"))
             targetPos = player?.Position ?? default;
+        
         ImGui.SameLine();
-        if (ImGui.Button("目的地: 选中目标位置"))
+        if (ImGui.Button("选中目标位置"))
             targetPos = player?.TargetObject?.Position ?? default;
+        
         ImGui.SameLine();
-        if (ImGui.Button("目的地: 地图标点位置"))
+        if (ImGui.Button("地图标点位置"))
             targetPos = MapUtils.FlagToPoint(_manager.Query) ?? default;
 
         if (ImGui.Button("导出位图"))
@@ -89,6 +98,10 @@ class DebugNavmeshManager : IDisposable
         ImGui.SameLine();
         if (ImGui.Button("飞行至目的地"))
             _asyncMove.MoveTo(targetPos, true);
+        
+        ImGui.SameLine();
+        if (ImGui.Button("停止移动"))
+            _followPath.Stop();
         
         ImGui.NewLine();
 

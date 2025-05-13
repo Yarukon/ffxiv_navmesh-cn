@@ -28,7 +28,7 @@ public sealed class Plugin : IDalamudPlugin
         _followPath = new(dalamud, _navmeshManager);
         _asyncMove = new(_navmeshManager, _followPath);
         _dtrProvider = new(_navmeshManager, _asyncMove);
-        _wndMain = new(_navmeshManager, _followPath, _asyncMove, _dtrProvider, dalamud.ConfigDirectory.FullName);
+        _wndMain = new(_navmeshManager, _followPath, _asyncMove, _dtrProvider, _followPath, dalamud.ConfigDirectory.FullName);
         _ipcProvider = new(_navmeshManager, _followPath, _asyncMove, _wndMain, _dtrProvider);
 
         WindowSystem.AddWindow(_wndMain);
@@ -52,6 +52,7 @@ public sealed class Plugin : IDalamudPlugin
             /vnav stop → 停止所有导航移动任务
             /vnav reload → 从缓存中重新加载本区域导航数据
             /vnav rebuild → 从游戏中重新构建本区域导航数据
+            /vnav recalculate → 重新计算当前路径（卡住时使用）
             /vnav aligncamera → 将当前面向对齐移动方向
             /vnav aligncamera true|yes|enable → 启用移动时将当前面向对齐移动方向
             /vnav aligncamera false|no|disable → 禁用移动时将当前面向对齐移动方向
@@ -113,7 +114,6 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnCommand(string command, string arguments)
     {
-        Service.Log.Debug($"cmd: '{command}', args: '{arguments}'");
         if (arguments.Length == 0)
         {
             _wndMain.IsOpen ^= true;
@@ -161,7 +161,6 @@ public sealed class Plugin : IDalamudPlugin
                 break;
             case "stop":
                 _followPath.Stop();
-                //_navmeshManager.CancelAllQueries();
                 break;
             case "aligncamera":
                 if (args.Length == 1)

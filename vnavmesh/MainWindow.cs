@@ -16,12 +16,12 @@ public class MainWindow : Window, IDisposable
     private DebugLayout _debugLayout;
     private string _configDirectory;
 
-    public MainWindow(NavmeshManager manager, FollowPath path, AsyncMoveRequest move, DTRProvider dtr, string configDir) : base("Navmesh")
+    public MainWindow(NavmeshManager manager, FollowPath path, AsyncMoveRequest move, DTRProvider dtr, FollowPath followPath, string configDir) : base("Navmesh")
     {
         _path = path;
         _configDirectory = configDir;
         _debugGameColl = new(_dd);
-        _debugNavmeshManager = new(_dd, _debugGameColl, manager, path, move, dtr);
+        _debugNavmeshManager = new(_dd, _debugGameColl, manager, path, move, dtr, followPath);
         _debugNavmeshCustom = new(_dd, _debugGameColl, manager, _configDirectory);
         _debugLayout = new(_debugGameColl);
     }
@@ -68,19 +68,19 @@ public class MainWindow : Window, IDisposable
         {
             if (tabs)
             {
-                using (var tab = ImRaii.TabItem("Config"))
+                using (var tab = ImRaii.TabItem("配置"))
                     if (tab)
                         Service.Config.Draw();
-                using (var tab = ImRaii.TabItem("Layout"))
+                using (var tab = ImRaii.TabItem("层级"))
                     if (tab)
                         _debugLayout.Draw();
-                using (var tab = ImRaii.TabItem("Collision"))
+                using (var tab = ImRaii.TabItem("碰撞"))
                     if (tab)
                         _debugGameColl.Draw();
-                using (var tab = ImRaii.TabItem("Navmesh manager"))
+                using (var tab = ImRaii.TabItem("导航"))
                     if (tab)
                         _debugNavmeshManager.Draw();
-                using (var tab = ImRaii.TabItem("Navmesh custom"))
+                using (var tab = ImRaii.TabItem("自定义导航"))
                     if (tab)
                         _debugNavmeshCustom.Draw();
             }
