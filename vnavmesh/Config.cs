@@ -2,6 +2,7 @@
 using Newtonsoft.Json.Linq;
 using System;
 using System.IO;
+using Dalamud.Interface.Utility;
 using FFXIVClientStructs.FFXIV.Client.UI;
 
 namespace Navmesh;
@@ -11,11 +12,13 @@ public class Config
     private const int _version = 1;
 
     public bool AutoLoadNavmesh = true;
-    public bool EnableDTR = true;
+    public bool EnableDTR       = true;
     public bool AlignCameraToMovement;
     public bool ShowWaypoints;
     public bool ForceShowGameCollision;
     public bool CancelMoveOnUserInput;
+    
+    public float VoxelPathfindRandomFactor = 0.5f;
 
     public event Action? Modified;
 
@@ -23,17 +26,54 @@ public class Config
 
     public void Draw()
     {
+        ImGui.Spacing();
+        
+        ImGui.Text("一般");
+        
+        ImGui.Separator();
+        ImGui.Spacing();
+        
         if (ImGui.Checkbox("切换区域时, 自动加载/构建区域导航数据", ref AutoLoadNavmesh))
             NotifyModified();
-        if (ImGui.Checkbox("启用服务器状态栏信息", ref EnableDTR))
+        
+        if (ImGui.Checkbox("在服务器状态栏显示导航信息", ref EnableDTR))
             NotifyModified();
+        
+        ImGui.NewLine();
+        
+        ImGui.Text("操控");
+        
+        ImGui.Separator();
+        ImGui.Spacing();
+        
         if (ImGui.Checkbox("将镜头面向对齐前进方向", ref AlignCameraToMovement))
             NotifyModified();
-        if (ImGui.Checkbox("显示即将去往的各目的地点", ref ShowWaypoints))
-            NotifyModified();
-        if (ImGui.Checkbox("始终开启游戏内碰撞显示", ref ForceShowGameCollision))
-            NotifyModified();
+        
         if (ImGui.Checkbox("当尝试操控游戏角色时, 自动取消寻路任务", ref CancelMoveOnUserInput))
+            NotifyModified();
+        
+        ImGui.NewLine();
+        
+        ImGui.Text("显示");
+        
+        ImGui.Separator();
+        ImGui.Spacing();
+        
+        if (ImGui.Checkbox("显示导航路径点", ref ShowWaypoints))
+            NotifyModified();
+        
+        if (ImGui.Checkbox("强制显示游戏内碰撞体", ref ForceShowGameCollision))
+            NotifyModified();
+        
+        ImGui.NewLine();
+        
+        ImGui.Text("体素导航 (飞行)");
+        
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
+        if (ImGui.SliderFloat("路线随机性", ref VoxelPathfindRandomFactor, 0.1f, 1f, "%.1f"))
             NotifyModified();
     }
 
@@ -85,8 +125,5 @@ public class Config
         }
     }
 
-    private static JObject ConvertConfig(JObject payload, int version)
-    {
-        return payload;
-    }
+    private static JObject ConvertConfig(JObject payload, int version) => payload;
 }
