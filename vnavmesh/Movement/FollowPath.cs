@@ -4,6 +4,7 @@ using System.Numerics;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using Navmesh.Utilities;
 
 namespace Navmesh.Movement;
 

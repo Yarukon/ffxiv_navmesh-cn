@@ -1,21 +1,22 @@
-﻿using Dalamud.Memory;
+﻿using System;
+using Dalamud.Memory;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.LayoutEngine;
 using FFXIVClientStructs.Interop;
 using FFXIVClientStructs.STD;
-using System;
 
-namespace Navmesh;
+namespace Navmesh.Utilities;
 
-public unsafe static class LayoutUtils
+public static unsafe class LayoutUtils
 {
-    public static string ReadString(byte* data) => data != null ? MemoryHelper.ReadStringNullTerminated((nint)data) : "";
-    public static string ReadString(RefCountedString* data) => data != null ? data->DataString : "";
+    public static string ReadString(byte* data) => 
+        data != null ? MemoryHelper.ReadStringNullTerminated((nint)data) : string.Empty;
 
-    public static V* FindPtr<K, V>(ref this StdMap<K, Pointer<V>> map, K key) where K : unmanaged, IComparable where V : unmanaged
-    {
-        return map.TryGetValuePointer(key, out var ptr) && ptr != null ? ptr->Value : null;
-    }
+    public static string ReadString(RefCountedString* data) => 
+        data != null ? data->DataString : string.Empty;
+
+    public static V* FindPtr<K, V>(ref this StdMap<K, Pointer<V>> map, K key) where K : unmanaged, IComparable where V : unmanaged =>
+        map.TryGetValuePointer(key, out var ptr) && ptr != null ? ptr->Value : null;
 
     public static ILayoutInstance* FindInstance(LayoutManager* layout, ulong key)
     {
@@ -25,19 +26,27 @@ public unsafe static class LayoutUtils
             if (iter != null)
                 return iter;
         }
+
         return null;
     }
 
     public static LayoutManager.Filter* FindFilter(LayoutManager* layout)
     {
-        if (layout->CfcId != 0) // note: some code paths check cfcid match only if TerritoryTypeId != 0; don't think it actually matters
+        // note: some code paths check cfcid match only if TerritoryTypeId != 0; don't think it actually matters
+        if (layout->CfcId != 0)
+        {
             foreach (var (k, v) in layout->Filters)
                 if (v.Value->CfcId == layout->CfcId)
                     return v.Value;
+        }
+
         if (layout->TerritoryTypeId != 0)
+        {
             foreach (var (k, v) in layout->Filters)
                 if (v.Value->TerritoryTypeId == layout->TerritoryTypeId)
                     return v.Value;
+        }
+
         return layout->TerritoryTypeId == 0 ? FindPtr(ref layout->Filters, layout->LayerFilterKey) : null;
     }
 
@@ -53,13 +62,11 @@ public unsafe static class LayoutUtils
                     return true;
             return false;
         }
-        else
-        {
-            foreach (var f in festivals)
-                if (f.Id == layer->Festival.Id)
-                    return true;
-            return false;
-        }
+
+        foreach (var f in festivals)
+            if (f.Id == layer->Festival.Id)
+                return true;
+        return false;
     }
 
     public static bool LayerActiveFilter(FileLayerGroupLayer* layer, uint filterId)
@@ -67,12 +74,15 @@ public unsafe static class LayoutUtils
         var filter = layer->Filter;
         return filter == null || filter->Operation switch
         {
-            FileLayerGroupLayerFilter.Op.Match => filter->Entries.Contains(filterId),
+            FileLayerGroupLayerFilter.Op.Match   => filter->Entries.Contains(filterId),
             FileLayerGroupLayerFilter.Op.NoMatch => !filter->Entries.Contains(filterId),
-            _ => true
+            _                                    => true
         };
     }
 
-    public static string FestivalString(GameMain.Festival f) => $"{(uint)(f.Phase << 16) | f.Id:X}";
-    public static string FestivalsString(ReadOnlySpan<GameMain.Festival> f) => $"{FestivalString(f[0])}.{FestivalString(f[1])}.{FestivalString(f[2])}.{FestivalString(f[3])}";
+    public static string FestivalString(GameMain.Festival f) => 
+        $"{(uint)(f.Phase << 16) | f.Id:X}";
+
+    public static string FestivalsString(ReadOnlySpan<GameMain.Festival> f) =>
+        $"{FestivalString(f[0])}.{FestivalString(f[1])}.{FestivalString(f[2])}.{FestivalString(f[3])}";
 }

@@ -6,6 +6,7 @@ using Navmesh.Movement;
 using System;
 using System.Globalization;
 using System.Numerics;
+using Navmesh.Utilities;
 
 namespace Navmesh;
 

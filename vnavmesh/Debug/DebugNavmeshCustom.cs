@@ -8,6 +8,7 @@ using Navmesh.NavVolume;
 using System;
 using System.Numerics;
 using System.Threading.Tasks;
+using Navmesh.Utilities;
 
 namespace Navmesh.Debug;
 

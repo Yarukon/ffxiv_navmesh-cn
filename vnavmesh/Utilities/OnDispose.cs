@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace Navmesh;
+namespace Navmesh.Utilities;
 
 // usage: using var x = new OnDispose(action);
 public readonly record struct OnDispose(Action a) : IDisposable

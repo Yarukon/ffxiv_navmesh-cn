@@ -9,6 +9,7 @@ using Dalamud.Game.ClientState.Conditions;
 using FFXIVClientStructs.FFXIV.Client.LayoutEngine;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision.Math;
 using Lumina.Excel.Sheets;
+using Navmesh.Utilities;
 using Action = System.Action;
 
 namespace Navmesh;

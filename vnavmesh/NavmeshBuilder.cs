@@ -4,6 +4,7 @@ using DotRecast.Core;
 using DotRecast.Detour;
 using DotRecast.Recast;
 using Navmesh.NavVolume;
+using Navmesh.Utilities;
 
 namespace Navmesh;
 
