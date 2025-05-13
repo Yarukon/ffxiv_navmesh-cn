@@ -2,7 +2,7 @@
 
 namespace Navmesh.Movement;
 
-internal unsafe static class OverrideAFK
+internal static unsafe class OverrideAFK
 {
     public static void ResetTimers()
     {
