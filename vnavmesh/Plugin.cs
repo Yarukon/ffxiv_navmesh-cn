@@ -169,6 +169,7 @@ public sealed class Plugin : IDalamudPlugin
                 MoveFlagCommand(true);
                 break;
             case "stop":
+                AsyncMove.CancelPathfinding();
                 FollowPath.Stop();
                 break;
             case "aligncamera":
@@ -202,11 +203,11 @@ public sealed class Plugin : IDalamudPlugin
 
     private void MoveFlagCommand(bool fly)
     {
-        if (NavmeshManager.Query == null)
-            return;
+        if (NavmeshManager.Query == null) return;
+        
         var pt = MapUtils.FlagToPoint(NavmeshManager.Query);
-        if (pt == null)
-            return;
+        if (pt == null) return;
+        
         AsyncMove.MoveTo(pt.Value, fly);
     }
 

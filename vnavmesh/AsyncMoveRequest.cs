@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Threading;
 using System.Threading.Tasks;
 using Navmesh.Movement;
 
@@ -19,6 +20,8 @@ public class AsyncMoveRequest : IDisposable
     private Task<List<Vector3>>? PendingTask;
     private bool                 PendingFly;
     private int                  RecalculationAttempts;
+    
+    private CancellationTokenSource? currentCTS;
 
     private const int MaxRecalculationAttempts = 5;
 
@@ -118,15 +121,12 @@ public class AsyncMoveRequest : IDisposable
     /// <returns>请求是否成功发起</returns>
     public bool MoveTo(Vector3 dest, bool fly)
     {
-        if (PendingTask != null)
-        {
-            Service.Log.Error("正在寻路中, 无法发起新的寻路请求...");
-            return false;
-        }
+        if (PendingTask != null) return false;
 
         Service.Log.Info($"准备 {(fly ? "飞行" : "步行")} 至 {dest:f3}");
 
-        PendingTask = NavmeshManager.QueryPath(Service.ClientState.LocalPlayer?.Position ?? default, dest, fly);
+        currentCTS  = new();
+        PendingTask = NavmeshManager.QueryPath(Service.ClientState.LocalPlayer?.Position ?? default, dest, fly, currentCTS.Token);
         PendingFly  = fly;
 
         return true;
@@ -163,6 +163,10 @@ public class AsyncMoveRequest : IDisposable
             else
             {
                 Service.Log.Warning("丢弃了未完成的寻路任务");
+                
+                currentCTS?.Cancel();
+                currentCTS?.Dispose();
+                currentCTS = null;
             }
         }
 
@@ -198,7 +202,11 @@ public class AsyncMoveRequest : IDisposable
         Service.Log.Info($"开始重新计算路径 (第{RecalculationAttempts}次尝试): 从 {currentPos:f2} 到 {targetPos:f2}, {(ignoreDeltaY ? "地面行走" : "立体行走/飞行")}");
 
         var fly = !ignoreDeltaY;
-        PendingTask = NavmeshManager.QueryPath(currentPos, targetPos, fly);
+
+        currentCTS?.Cancel();
+        currentCTS = new();
+        
+        PendingTask = NavmeshManager.QueryPath(currentPos, targetPos, fly, currentCTS.Token);
         PendingFly  = fly;
     }
 
