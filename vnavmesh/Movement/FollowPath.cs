@@ -119,9 +119,7 @@ public class FollowPath : IDisposable
 
             // 如果检测到卡住，尝试恢复
             if (_isStuck)
-            {
                 TryRecoverFromStuck(currentPos, now);
-            }
             else if (!_inRecoveryProcess)
             {
                 // 只有在非恢复过程中才重置恢复相关变量
@@ -185,12 +183,12 @@ public class FollowPath : IDisposable
     private void CheckForStuck(Vector3 currentPos, DateTime now)
     {
         // 如果正在计算新路径，暂时不进行卡住检测，防止重复判断
-        if (Plugin.Instance().AsyncMove.TaskInBusy || 
+        if (Plugin.Instance().AsyncMove.TaskInBusy ||
             (_pathRecalculationRequested && now - _lastPathRecalculationTime < TimeSpan.FromSeconds(3.0)))
         {
             // 如果正在计算路径，重置卡住检测计时器，防止误判
             _lastStuckCheckTime = now;
-            _lastMovementTime = now;
+            _lastMovementTime   = now;
             return;
         }
 
@@ -213,7 +211,7 @@ public class FollowPath : IDisposable
         if (hasSignificantMovement)
         {
             _lastSignificantMovementTime = now;
-            
+
             // 只有非恢复过程中或者有显著移动时才重置卡住状态
             if (!_inRecoveryProcess)
             {
@@ -241,7 +239,7 @@ public class FollowPath : IDisposable
                         _stuckCounter--;
                         return;
                     }
-                    
+
                     Service.Log.Debug($"检测到导航卡住: 位置 {currentPos}, 未移动时间: {(now - _lastMovementTime).TotalSeconds:F1}秒, 移动模式: {(_isFlying ? "飞行" : "地面")}");
                     _isStuck           = true;
                     _stuckStartTime    = now;
@@ -257,12 +255,12 @@ public class FollowPath : IDisposable
             // 仅在非恢复过程中更新位置和时间
             _lastSignificantPosition = currentPos;
             _lastMovementTime        = now;
-            
+
             // 只有移动大于阈值且不在恢复过程中，才减少计数器
             if (_stuckCounter > 0)
                 _stuckCounter--;
         }
-        
+
         // 检查是否长时间卡住（超过8秒），无论是否有微小移动
         if (_isStuck && now - _stuckStartTime > TimeSpan.FromSeconds(8) && now - _lastSignificantMovementTime > TimeSpan.FromSeconds(4))
         {
@@ -278,7 +276,7 @@ public class FollowPath : IDisposable
     private void TryRecalculatePath(Vector3 currentPos, DateTime now, bool forceFindAlternative = false)
     {
         if (_pathRecalculationRequested && !forceFindAlternative) return;
-        
+
         if (now - _lastPathRecalculationTime < _pathRecalculationCooldown && !forceFindAlternative)
             return;
 
@@ -307,21 +305,21 @@ public class FollowPath : IDisposable
                     targetPos.Y + offsetY, // 飞行模式下Y轴也添加随机偏移
                     targetPos.Z + offsetZ
                 );
-                
+
                 Service.Log.Debug($"生成备选目标点: 原始{targetPos} -> 备选{_alternativeTargetPosition}, 移动模式: {(_isFlying ? "飞行" : "地面")}");
             }
-            
+
             var destination = forceFindAlternative && _alternativeTargetPosition.HasValue ? _alternativeTargetPosition.Value : targetPos;
-            
+
             // 触发路径重新计算事件
             Service.Log.Debug($"请求重新计算路径: 从 {currentPos} 到 {destination}, 移动模式: {(_isFlying ? "飞行" : "地面")}");
             RequestPathRecalculation?.Invoke(currentPos, destination, IgnoreDeltaY);
             _pathRecalculationRequested = true;
-            
+
             // 设置较长的恢复时间，等待路径计算完成
             _nextRecoveryTime  = now.AddSeconds(2.5); // 增加等待时间，确保有足够时间计算路径
             _recoveryDirection = null;
-            
+
             // 重置卡住检测的计时器，避免在计算路径期间触发卡住判定
             _lastMovementTime = now;
         }
@@ -344,6 +342,21 @@ public class FollowPath : IDisposable
     // 飞行状态下的恢复策略
     private void RecoverFromFlyingStuck(Vector3 currentPos, DateTime now)
     {
+        // 检测是否可能因为高度限制而卡住
+        var potentialHeightLimit = false;
+
+        // 如果当前位置和上次位置的Y轴差值很小，可能是达到了高度限制
+        if (posPreviousFrame.HasValue)
+        {
+            // 如果向上移动但Y轴增量接近于0，可能是遇到高度限制
+            if (_recoveryDirection.HasValue && _recoveryDirection.Value.Y > 0 &&
+                Math.Abs(currentPos.Y - posPreviousFrame.Value.Y)         < 0.1f)
+            {
+                potentialHeightLimit = true;
+                Service.Log.Debug("检测到可能存在高度限制，Y轴变化很小");
+            }
+        }
+
         switch (_recoveryAttempts)
         {
             // 第一次尝试：垂直上升一段距离
@@ -352,43 +365,98 @@ public class FollowPath : IDisposable
                 Service.Log.Debug("飞行模式：尝试向上升高");
                 _nextRecoveryTime = now.AddSeconds(1f);
                 break;
-            // 第二次尝试：原地盘旋后上升
+            // 第二次尝试：原地盘旋后上升，如果检测到高度限制则向前移动
             case 2:
             {
-                const float spiralAngle = 90.0f * (float)Math.PI / 180.0f;
-                var         direction   = Waypoints.Count > 0 ? Vector3.Normalize(Waypoints[0] - currentPos) : Vector3.UnitZ;
+                if (potentialHeightLimit)
+                {
+                    // 检测到高度限制，改为水平移动
+                    var direction = Waypoints.Count > 0 ? Vector3.Normalize(Waypoints[0] - currentPos) : Vector3.UnitZ;
+                    // 移除Y轴分量，纯水平移动
+                    direction.Y = 0;
+                    // 确保是单位向量
+                    if (direction.Length() > 0.001f) direction = Vector3.Normalize(direction);
+                    _recoveryDirection = direction * 3.0f;
+                    Service.Log.Debug("检测到高度限制，改为水平移动");
+                }
+                else
+                {
+                    const float spiralAngle = 90.0f * (float)Math.PI / 180.0f;
+                    var         direction   = Waypoints.Count > 0 ? Vector3.Normalize(Waypoints[0] - currentPos) : Vector3.UnitZ;
 
-                _recoveryDirection = new Vector3(
-                                         (direction.X * (float)Math.Cos(spiralAngle)) - (direction.Z * (float)Math.Sin(spiralAngle)),
-                                         3.0f, // 向上升高
-                                         (direction.X * (float)Math.Sin(spiralAngle)) + (direction.Z * (float)Math.Cos(spiralAngle))) * 3.0f;
+                    _recoveryDirection = new Vector3(
+                                             (direction.X * (float)Math.Cos(spiralAngle)) - (direction.Z * (float)Math.Sin(spiralAngle)),
+                                             3.0f, // 向上升高
+                                             (direction.X * (float)Math.Sin(spiralAngle)) + (direction.Z * (float)Math.Cos(spiralAngle))) * 3.0f;
 
-                Service.Log.Debug("飞行模式：尝试盘旋上升");
+                    Service.Log.Debug("飞行模式：尝试盘旋上升");
+                }
+
                 _nextRecoveryTime = now.AddSeconds(1f);
             }
                 break;
-            // 第三次尝试：重新计算路径
+            // 第三次尝试：根据是否存在高度限制选择策略
             case 3:
-                Service.Log.Debug("飞行模式：尝试重新计算路径");
-                TryRecalculatePath(currentPos, now);
+                if (potentialHeightLimit)
+                {
+                    // 如果检测到高度限制，尝试水平后退
+                    var direction = Waypoints.Count > 0 ? Vector3.Normalize(currentPos - Waypoints[0]) : -Vector3.UnitZ;
+                    // 移除Y轴分量
+                    direction.Y = 0;
+                    if (direction.Length() > 0.001f) direction = Vector3.Normalize(direction);
+                    _recoveryDirection = direction * 4.0f;
+                    Service.Log.Debug("检测到高度限制，尝试水平后退");
+                    _nextRecoveryTime = now.AddSeconds(1.5f);
+                }
+                else
+                {
+                    Service.Log.Debug("飞行模式：尝试重新计算路径");
+                    TryRecalculatePath(currentPos, now);
+                }
+
                 break;
-            // 第四次尝试：先向后退再向上升高，然后重新计算
+            // 第四次尝试：调整策略以处理高度限制
             case 4:
             {
-                var direction = Waypoints.Count > 0 ? Vector3.Normalize(currentPos - Waypoints[0]) : -Vector3.UnitZ;
-                direction.Y        = 2.0f;
-                _recoveryDirection = direction * 5.0f;
+                if (potentialHeightLimit)
+                {
+                    // 在高度限制的情况下，尝试下降并水平移动
+                    var direction = Waypoints.Count > 0 ? Vector3.Normalize(Waypoints[0] - currentPos) : Vector3.UnitZ;
+                    direction.Y        = -3.0f; // 向下移动以避开高度限制
+                    _recoveryDirection = direction * 4.0f;
+                    Service.Log.Debug("检测到高度限制，尝试下降并水平移动");
+                }
+                else
+                {
+                    var direction = Waypoints.Count > 0 ? Vector3.Normalize(currentPos - Waypoints[0]) : -Vector3.UnitZ;
+                    direction.Y        = 2.0f;
+                    _recoveryDirection = direction * 5.0f;
+                    Service.Log.Debug("飞行模式：尝试后退上升");
+                }
 
-                Service.Log.Debug("飞行模式：尝试后退上升");
                 _nextRecoveryTime = now.AddSeconds(2.0);
 
                 // 在下一步后自动重新计算路径
                 _pathRecalculationRequested = false;
             }
                 break;
-            // 第五次尝试：强制使用备选目标点重新计算高空路径
+            // 第五次尝试：重新计算路径，并考虑高度限制
             case 5:
-                Service.Log.Debug("飞行模式：使用备选高空目标点重新计算");
+                Service.Log.Debug("飞行模式：使用备选目标点重新计算");
+                // 如果检测到高度限制，强制将备选目标点的高度调低
+                if (potentialHeightLimit && _originalTargetPosition.HasValue)
+                {
+                    var targetPos = _originalTargetPosition.Value;
+
+                    // 将目标点的高度调整为低于当前高度
+                    _alternativeTargetPosition = new Vector3(
+                        targetPos.X  + (((float)new Random().NextDouble() * 5.0f) - 2.5f),
+                        currentPos.Y - 5.0f, // 将高度设定为当前高度以下
+                        targetPos.Z  + (((float)new Random().NextDouble() * 5.0f) - 2.5f)
+                    );
+                    Service.Log.Debug($"检测到高度限制，生成低高度备选目标点: {_alternativeTargetPosition}");
+                }
+
                 TryRecalculatePath(currentPos, now, true);
                 break;
             // 多次尝试失败，停止导航
@@ -407,7 +475,7 @@ public class FollowPath : IDisposable
             case 1:
                 Service.Log.Debug("地面模式：尝试跳跃");
                 ExecuteJump();
-                
+
                 _nextRecoveryTime        = now.AddSeconds(2.0);
                 _lastSignificantPosition = currentPos;
                 break;
@@ -417,7 +485,7 @@ public class FollowPath : IDisposable
                 if (jumpMovementDistance > SIGNIFICANT_MOVEMENT_THRESHOLD * 0.5f)
                 {
                     Service.Log.Debug($"跳跃似乎有效，移动了 {jumpMovementDistance:F2} 距离，重置卡住状态");
-                    
+
                     // 重置卡住状态，但保留当前位置作为新的参考点
                     _isStuck                 = false;
                     _stuckCounter            = 0;
@@ -427,60 +495,60 @@ public class FollowPath : IDisposable
                     _lastSignificantPosition = currentPos;
                     return;
                 }
-                
+
                 // 跳跃效果不明显，尝试左转移动
                 const float leftAngle = 45.0f * (float)Math.PI / 180.0f;
-                var direction = Waypoints.Count > 0 ? Vector3.Normalize(Waypoints[0] - currentPos) : Vector3.UnitZ;
-                
+                var         direction = Waypoints.Count > 0 ? Vector3.Normalize(Waypoints[0] - currentPos) : Vector3.UnitZ;
+
                 _recoveryDirection = new Vector3((direction.X * (float)Math.Cos(leftAngle)) - (direction.Z * (float)Math.Sin(leftAngle)), 0,
                                                  (direction.X * (float)Math.Sin(leftAngle)) + (direction.Z * (float)Math.Cos(leftAngle))) * 2.0f;
-                
+
                 Service.Log.Debug("地面模式：尝试左侧移动");
-                _nextRecoveryTime = now.AddSeconds(1.5);
+                _nextRecoveryTime        = now.AddSeconds(1.5);
                 _lastSignificantPosition = currentPos; // 更新参考位置
                 break;
 
             case 3:
                 // 检查左转移动是否有效
                 var leftMovementDistance = Vector3.Distance(currentPos, _lastSignificantPosition);
-                
+
                 if (leftMovementDistance > SIGNIFICANT_MOVEMENT_THRESHOLD * 0.5f)
                 {
                     Service.Log.Debug($"左侧移动有效，移动了{leftMovementDistance:F2}距离，重置卡住状态");
                     ResetStuckState();
-                    _lastMovementTime = now;
+                    _lastMovementTime        = now;
                     _lastSignificantPosition = currentPos;
                     return;
                 }
-                
+
                 // 左转移动效果不明显，尝试右转移动
                 const float rightAngle = -45.0f * (float)Math.PI / 180.0f;
                 direction = Waypoints.Count > 0 ? Vector3.Normalize(Waypoints[0] - currentPos) : Vector3.UnitZ;
-                
+
                 _recoveryDirection = new Vector3(
-                    (direction.X * (float)Math.Cos(rightAngle)) - (direction.Z * (float)Math.Sin(rightAngle)),
-                    0,
-                    (direction.X * (float)Math.Sin(rightAngle)) + (direction.Z * (float)Math.Cos(rightAngle))
-                ) * 2.0f;
-                
+                                         (direction.X * (float)Math.Cos(rightAngle)) - (direction.Z * (float)Math.Sin(rightAngle)),
+                                         0,
+                                         (direction.X * (float)Math.Sin(rightAngle)) + (direction.Z * (float)Math.Cos(rightAngle))
+                                     ) * 2.0f;
+
                 Service.Log.Debug("地面模式：尝试右侧移动");
-                _nextRecoveryTime = now.AddSeconds(1.5);
+                _nextRecoveryTime        = now.AddSeconds(1.5);
                 _lastSignificantPosition = currentPos;
                 break;
 
             case 4:
                 // 检查右转移动是否有效
                 var rightMovementDistance = Vector3.Distance(currentPos, _lastSignificantPosition);
-                
+
                 if (rightMovementDistance > SIGNIFICANT_MOVEMENT_THRESHOLD * 0.5f)
                 {
                     Service.Log.Debug($"右侧移动有效，移动了{rightMovementDistance:F2}距离，重置卡住状态");
                     ResetStuckState();
-                    _lastMovementTime = now;
+                    _lastMovementTime        = now;
                     _lastSignificantPosition = currentPos;
                     return;
                 }
-                
+
                 // 之前的微调移动都无效，尝试重新计算路径
                 Service.Log.Debug("地面模式：方向微调未奏效，尝试重新计算路径");
                 TryRecalculatePath(currentPos, now);
@@ -493,9 +561,9 @@ public class FollowPath : IDisposable
                     // 新路径加载后但仍卡住，尝试后退
                     var backDirection = Waypoints.Count > 0 ? Vector3.Normalize(currentPos - Waypoints[0]) : -Vector3.UnitZ;
                     _recoveryDirection = backDirection * 3.0f;
-                    
+
                     Service.Log.Debug("地面模式：尝试后退");
-                    _nextRecoveryTime = now.AddSeconds(2.0);
+                    _nextRecoveryTime        = now.AddSeconds(2.0);
                     _lastSignificantPosition = currentPos;
                 }
                 else
@@ -503,21 +571,22 @@ public class FollowPath : IDisposable
                     // 路径计算中或刚计算完，多等一会
                     _nextRecoveryTime = now.AddSeconds(1.0);
                 }
+
                 break;
 
             case 6:
                 // 检查后退是否有效
                 var backMovementDistance = Vector3.Distance(currentPos, _lastSignificantPosition);
-                
+
                 if (backMovementDistance > SIGNIFICANT_MOVEMENT_THRESHOLD * 0.5f)
                 {
                     Service.Log.Debug($"后退移动有效，移动了{backMovementDistance:F2}距离，重置卡住状态");
                     ResetStuckState();
-                    _lastMovementTime = now;
+                    _lastMovementTime        = now;
                     _lastSignificantPosition = currentPos;
                     return;
                 }
-                
+
                 // 后退无效，尝试使用备选目标点重新计算路径
                 Service.Log.Debug("地面模式：后退未奏效，使用备选目标点重新计算");
                 TryRecalculatePath(currentPos, now, true);
@@ -527,30 +596,30 @@ public class FollowPath : IDisposable
                 // 第七次尝试：跳跃+向前冲刺组合
                 Service.Log.Debug("地面模式：尝试跳跃冲刺组合");
                 ExecuteJump();
-                
+
                 if (Waypoints.Count > 0)
                 {
                     var forwardDirection = Vector3.Normalize(Waypoints[0] - currentPos);
                     _recoveryDirection = forwardDirection * 4.0f; // 使用更大的冲量
                 }
-                
-                _nextRecoveryTime = now.AddSeconds(1.5);
+
+                _nextRecoveryTime        = now.AddSeconds(1.5);
                 _lastSignificantPosition = currentPos;
                 break;
 
             case 8:
                 // 检查跳跃冲刺是否有效
                 var finalMovementDistance = Vector3.Distance(currentPos, _lastSignificantPosition);
-                
+
                 if (finalMovementDistance > SIGNIFICANT_MOVEMENT_THRESHOLD * 0.5f)
                 {
                     Service.Log.Debug($"跳跃冲刺有效，移动了{finalMovementDistance:F2}距离，重置卡住状态");
                     ResetStuckState();
-                    _lastMovementTime = now;
+                    _lastMovementTime        = now;
                     _lastSignificantPosition = currentPos;
                     return;
                 }
-                
+
                 // 所有策略都失败，停止导航
                 Service.Log.Error("多次地面恢复尝试失败，停止导航");
                 Stop();
