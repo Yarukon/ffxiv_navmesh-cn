@@ -266,7 +266,9 @@ public sealed class NavmeshManager : IDisposable
         var parallelOptions = new ParallelOptions
         {
             CancellationToken      = cancel,
-            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1)
+            MaxDegreeOfParallelism = Environment.ProcessorCount <= 8
+                                         ? Math.Max(1, Environment.ProcessorCount / 3)
+                                         : Math.Max(1, Environment.ProcessorCount / 2)
         };
 
         var tileTasks = new List<(int X, int Z)>();
