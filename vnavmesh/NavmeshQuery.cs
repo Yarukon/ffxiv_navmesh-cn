@@ -90,7 +90,7 @@ public class NavmeshQuery
     {
         if (VolumeQuery == null)
         {
-            Service.Log.Error("导航空间未构建");
+            Service.Log.Error("导航尚未构建");
             return [];
         }
 
@@ -99,64 +99,24 @@ public class NavmeshQuery
         Service.Log.Debug($"[寻路] 体素 {startVoxel:X} -> {endVoxel:X}");
         if (startVoxel == VoxelMap.InvalidVoxel || endVoxel == VoxelMap.InvalidVoxel)
         {
-            Service.Log.Error($"从 {from} ({startVoxel:X}) 到 {to} ({endVoxel:X}) 的路径查找失败：无法找到空体素");
+            Service.Log.Error($"无法找到从 {from} ({startVoxel:X}) 到 {to} ({endVoxel:X}) 的路径：未能找到空体素");
             return [];
         }
 
-        var timer = Timer.Create();
-
-        // TODO: 对于拉绳算法，我们是否需要中间点？
-        var voxelPath = VolumeQuery.FindPath(startVoxel, endVoxel, from, to, useRaycast, false, cancel);
+        var timer     = Timer.Create();
+        var voxelPath = VolumeQuery.FindPath(startVoxel, endVoxel, from, to, useRaycast, false, cancel); // TODO: 弦拉算法是否需要中间点？
         if (voxelPath.Count == 0)
         {
-            Service.Log.Error($"从 {from} ({startVoxel:X}) 到 {to} ({endVoxel:X}) 的路径查找失败：无法在空间中找到路径");
+            Service.Log.Error($"无法找到从 {from} ({startVoxel:X}) 到 {to} ({endVoxel:X}) 的路径：未能找到路径");
             return [];
         }
+        
+        Service.Log.Debug($"寻路耗时 {timer.Value().TotalSeconds:f3}秒: {string.Join(", ", voxelPath.Select(r => $"{r.p} {r.voxel:X}"))}");
 
-        Service.Log.Debug($"寻路耗时 {timer.Value().TotalSeconds:f3} 秒: {string.Join(", ", voxelPath.Select(r => $"{r.p} {r.voxel:X}"))}");
-
-        // TODO: 拉绳算法支持
+        // TODO: 弦拉优化支持
         var res = voxelPath.Select(r => r.p).ToList();
         res.Add(to);
-
-        if (voxelPath.Count > 0)
-        {
-            var pathVariance = CalculatePathVariance(voxelPath);
-            var randomizeStatus = pathVariance > 0.05f ? "高随机性" :
-                                  pathVariance > 0.01f ? "中随机性" : "低随机性";
-            Service.Log.Debug($"[空间随机化成功] 点位: {voxelPath.Count} / 状态: {randomizeStatus} ({pathVariance:F2})");
-        }
-
         return res;
-    }
-
-    // 计算路径方差作为随机化指标
-    private static float CalculatePathVariance(List<(ulong voxel, Vector3 p)> path)
-    {
-        if (path.Count < 3) return 0;
-
-        float totalVariance = 0;
-        for (var i = 1; i < path.Count - 1; i++)
-        {
-            // 计算三点之间的直线偏差
-            var prev = path[i - 1].p;
-            var curr = path[i].p;
-            var next = path[i + 1].p;
-
-            // 计算理想直线和实际点的距离
-            var idealDir      = Vector3.Normalize(next - prev);
-            var segmentLength = Vector3.Distance(prev, next);
-            var idealPos      = prev + (idealDir * (Vector3.Distance(prev, curr) / segmentLength * segmentLength));
-
-            // 计算实际点到理想线段的距离
-            var deviation = Vector3.Distance(curr, idealPos);
-
-            // 累加标准化偏差
-            totalVariance += deviation / Math.Max(0.001f, segmentLength);
-        }
-
-        // 返回平均方差
-        return path.Count > 2 ? totalVariance / (path.Count - 2) : 0;
     }
 
     // returns 0 if not found, otherwise polygon ref
