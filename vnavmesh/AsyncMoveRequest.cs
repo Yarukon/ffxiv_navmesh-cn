@@ -39,6 +39,11 @@ public class AsyncMoveRequest : IDisposable
     /// </summary>
     public bool TaskInBusy => PendingTask is { IsCompleted: false };
 
+    /// <summary>
+    ///     路径计算完成事件，参数为计算出的路径点列表和计算是否成功
+    /// </summary>
+    public event Action<List<Vector3>, bool>? OnPathCalculationComplete;
+
     #endregion
 
     #region 构造和释放
@@ -88,7 +93,9 @@ public class AsyncMoveRequest : IDisposable
 
             try
             {
-                if (PendingTask.Result.Count <= 1)
+                var isSuccess = PendingTask.Result.Count > 1;
+                
+                if (!isSuccess)
                 {
                     Service.Log.Warning("计算的路径无效或过短");
                     if (RecalculationAttempts >= MaxRecalculationAttempts)
@@ -102,10 +109,14 @@ public class AsyncMoveRequest : IDisposable
                     RecalculationAttempts = 0;
                     FollowPath.Move(PendingTask.Result, !PendingFly);
                 }
+                
+                // 触发路径计算完成事件
+                OnPathCalculationComplete?.Invoke(PendingTask.Result, isSuccess);
             }
             catch (Exception ex)
             {
                 Plugin.DuoLog(ex, "寻路失败");
+                OnPathCalculationComplete?.Invoke(new List<Vector3>(), false);
             }
 
             PendingTask.Dispose();

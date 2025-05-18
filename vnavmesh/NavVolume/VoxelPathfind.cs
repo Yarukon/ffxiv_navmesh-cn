@@ -15,6 +15,8 @@ public class VoxelPathfind(VoxelMap volume)
     private          ulong                  GoalVoxel;
     private          Vector3                GoalPos;
     private          bool                   UseRaycast;
+    
+    private static readonly Random Random = new();
 
     private const bool  AllowReopen    = false; // this is extremely expensive and doesn't seem to actually improve the result
     private const float RaycastLimitSq = float.MaxValue;
@@ -316,7 +318,7 @@ public class VoxelPathfind(VoxelMap volume)
     
     private float CalculateGScore(ref Node parent, ulong destVoxel, Vector3 destPos, ref int parentIndex)
     {
-        var randomFactor = (float)new Random().NextDouble() * Service.Config.VoxelPathfindRandomFactor;
+        var randomFactor = (float)Random.NextDouble() * Service.Config.VoxelPathfindRandomFactor;
 
         float   baseDistance;
         float   parentBaseG;
