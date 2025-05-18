@@ -40,12 +40,8 @@ public sealed class NavmeshManager : IDisposable
     private int  numActivePathfinds;
 
     // 常用路径点缓存
-    private readonly ConcurrentDictionary<string, List<Vector3>> _commonPathsCache = new();
-    private readonly object                                      _commonPathsLock  = new();
-
-    // 热点位置缓存
-    private readonly HashSet<Vector3> _hotspotLocations = new();
-
+    private readonly ConcurrentDictionary<string, List<Vector3>> commonPathsCache = new();
+    
     private readonly DirectoryInfo cacheDirectory;
 
     public NavmeshManager(DirectoryInfo cacheDir)
@@ -122,141 +118,12 @@ public sealed class NavmeshManager : IDisposable
                 Navmesh = navmesh;
                 Query   = new(Navmesh);
                 OnNavmeshChanged?.Invoke(Navmesh, Query);
-
-                // 预热常见路径
-                if (Query != null && Service.Config.EnablePathCachePrewarming) await Task.Run(() => PreheatCommonPaths(cancel), cancel);
             }, cts.Token);
         }
 
         return true;
     }
-
-    private void PreheatCommonPaths(CancellationToken cancel)
-    {
-        if (Query == null || Navmesh == null) return;
-
-        try
-        {
-            // 清空旧缓存
-            _commonPathsCache.Clear();
-            _hotspotLocations.Clear();
-
-            // 从数据中加载热点位置
-            LoadHotspotLocations();
-
-            // 如果热点位置太少，不进行预热
-            if (_hotspotLocations.Count < 2) return;
-
-            Log($"开始预热常用路径，共有 {_hotspotLocations.Count} 个热点位置");
-
-            // 创建热点位置之间的路径
-            var locations = _hotspotLocations.ToArray();
-            var startTime = DateTime.Now;
-            var pathCount = 0;
-
-            // 并行预热路径
-            Parallel.For(0, locations.Length,
-                         new ParallelOptions { CancellationToken = cancel, MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2) }, i =>
-                         {
-                             for (var j = i + 1; j < locations.Length; j++)
-                             {
-                                 if (cancel.IsCancellationRequested) break;
-
-                                 var from = locations[i];
-                                 var to   = locations[j];
-
-                                 // 只缓存一定距离内的路径
-                                 if ((from - to).LengthSquared() > 10000) continue;
-
-                                 try
-                                 {
-                                     var path = Query.PathfindVolume(from, to, UseRaycasts, UseStringPulling, cancel);
-                                     if (path.Count > 0)
-                                     {
-                                         var key = GetPathKey(from, to);
-                                         _commonPathsCache[key] = path;
-                                         Interlocked.Increment(ref pathCount);
-                                     }
-                                 }
-                                 catch (OperationCanceledException) { throw; }
-                                 catch (Exception ex) { Log($"预热路径时出错: {ex.Message}"); }
-                             }
-                         });
-
-            var duration = (DateTime.Now - startTime).TotalSeconds;
-            Log($"预热完成: 缓存了 {pathCount} 条路径, 耗时 {duration:F2} 秒");
-        }
-        catch (OperationCanceledException) { Log("路径预热被取消"); }
-        catch (Exception ex) { Log($"路径预热失败: {ex}"); }
-    }
-
-    private void LoadHotspotLocations()
-    {
-        if (Navmesh != null)
-        {
-            try
-            {
-                // 使用正确的属性获取边界
-                Vector3 min = new(-1024);
-                Vector3 max = new(1024);
-
-                // 根据是否有体素导航，获取合适的边界信息
-                if (Navmesh.Volume != null)
-                {
-                    min = Navmesh.Volume.RootTile.BoundsMin;
-                    max = Navmesh.Volume.RootTile.BoundsMax;
-                }
-
-                var center = (min + max) * 0.5f;
-
-                // 添加中心点
-                _hotspotLocations.Add(center);
-
-                // 在边界附近添加几个点
-                var extents = (max - min) * 0.25f;
-                for (var i = 0; i < 8; i++)
-                {
-                    var offset = new Vector3(
-                        (i & 1) == 0 ? -extents.X : extents.X,
-                        0,
-                        (i & 2) == 0 ? -extents.Z : extents.Z
-                    );
-
-                    var point = center + offset;
-                    if (Query!.FindNearestVolumeVoxel(point) != VoxelMap.InvalidVoxel) _hotspotLocations.Add(point);
-                }
-
-                // 如果有导航网格多边形数据，可以采样多边形中心点
-                if (Query?.MeshQuery != null)
-                {
-                    try
-                    {
-                        var reachablePolys = Query.FindReachableMeshPolys(Query.FindNearestMeshPoly(center));
-                        var sampleCount    = Math.Min(20, reachablePolys.Count);
-                        var sampleStep     = Math.Max(1, reachablePolys.Count / sampleCount);
-
-                        var polyArray = reachablePolys.ToArray();
-                        for (var i = 0; i < polyArray.Length; i += sampleStep)
-                        {
-                            var polyCenter = Query.MeshQuery.GetAttachedNavMesh().GetPolyCenter(polyArray[i]).RecastToSystem();
-                            _hotspotLocations.Add(polyCenter);
-                        }
-                    }
-                    catch (Exception ex) { Log($"加载热点位置时出错: {ex.Message}"); }
-                }
-
-                Log($"已加载 {_hotspotLocations.Count} 个热点位置");
-            }
-            catch (Exception ex)
-            {
-                Log($"加载热点位置时发生错误: {ex.Message}");
-
-                // 出错时添加一个默认点以保证热点集合不为空
-                _hotspotLocations.Add(new Vector3(0, 0, 0));
-            }
-        }
-    }
-
+    
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static string GetPathKey(Vector3 from, Vector3 to)
     {
@@ -296,7 +163,7 @@ public sealed class NavmeshManager : IDisposable
         if (flying && Service.Config.EnablePathCachePrewarming)
         {
             var pathKey = GetPathKey(from, to);
-            if (_commonPathsCache.TryGetValue(pathKey, out var cachedPath))
+            if (commonPathsCache.TryGetValue(pathKey, out var cachedPath))
             {
                 Log($"使用预缓存路径: {from} -> {to}");
                 return Task.FromResult(cachedPath);
@@ -327,8 +194,8 @@ public sealed class NavmeshManager : IDisposable
             // 如果路径有效且启用了缓存，将路径添加到缓存
             if (flying && path.Count > 0 && Service.Config.EnablePathCachePrewarming)
             {
-                var pathKey                                                             = GetPathKey(from, to);
-                if (!_commonPathsCache.ContainsKey(pathKey)) _commonPathsCache[pathKey] = path;
+                var pathKey                                                           = GetPathKey(from, to);
+                commonPathsCache.TryAdd(pathKey, path);
             }
 
             return path;
@@ -419,8 +286,7 @@ public sealed class NavmeshManager : IDisposable
             Navmesh = null;
 
             // 清空路径缓存
-            _commonPathsCache.Clear();
-            _hotspotLocations.Clear();
+            commonPathsCache.Clear();
         }, CancellationToken.None);
     }
 
