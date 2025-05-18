@@ -19,6 +19,7 @@ public class Config
     public bool CancelMoveOnUserInput;
     
     public float VoxelPathfindRandomFactor = 0.5f;
+    public bool EnablePathCachePrewarming = true;
 
     public event Action? Modified;
 
@@ -74,6 +75,9 @@ public class Config
 
         ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
         if (ImGui.SliderFloat("路线随机性", ref VoxelPathfindRandomFactor, 0.1f, 1f, "%.1f"))
+            NotifyModified();
+            
+        if (ImGui.Checkbox("启用路径缓存预热", ref EnablePathCachePrewarming))
             NotifyModified();
     }
 
