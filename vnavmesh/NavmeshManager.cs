@@ -38,9 +38,6 @@ public sealed class NavmeshManager : IDisposable
     public  bool PathfindInProgress        => numActivePathfinds > 0;
     public  int  NumQueuedPathfindRequests => numActivePathfinds > 0 ? numActivePathfinds - 1 : 0;
     private int  numActivePathfinds;
-
-    // 常用路径点缓存
-    private readonly ConcurrentDictionary<string, List<Vector3>> commonPathsCache = new();
     
     private readonly DirectoryInfo cacheDirectory;
 
@@ -159,16 +156,6 @@ public sealed class NavmeshManager : IDisposable
         if (currentCTS == null)
             throw new Exception("无法开始查询, 导航数据仍在构建过程中");
 
-        if (flying)
-        {
-            var pathKey = GetPathKey(from, to);
-            if (commonPathsCache.TryGetValue(pathKey, out var cachedPath))
-            {
-                Log($"使用预缓存路径: {from} -> {to}");
-                return Task.FromResult(cachedPath);
-            }
-        }
-
         // 任务可以被内部请求（即当导航网格重新加载时）或外部取消
         var combined = CancellationTokenSource.CreateLinkedTokenSource(currentCTS.Token, externalCancel);
         ++numActivePathfinds;
@@ -189,13 +176,6 @@ public sealed class NavmeshManager : IDisposable
                            : Query.PathfindMesh(from, to, UseRaycasts, UseStringPulling, combined.Token);
             }, combined.Token);
             Log($"寻路完成: {path.Count} 个路径点");
-
-            // 如果路径有效且启用了缓存，将路径添加到缓存
-            if (flying && path.Count > 0)
-            {
-                var pathKey = GetPathKey(from, to);
-                commonPathsCache.TryAdd(pathKey, path);
-            }
 
             return path;
         }, combined.Token);
@@ -284,9 +264,7 @@ public sealed class NavmeshManager : IDisposable
             OnNavmeshChanged?.Invoke(null, null);
             Query   = null;
             Navmesh = null;
-
-            // 清空路径缓存
-            commonPathsCache.Clear();
+            
         }, CancellationToken.None);
     }
 
