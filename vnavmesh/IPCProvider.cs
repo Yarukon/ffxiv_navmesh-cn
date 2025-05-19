@@ -36,9 +36,9 @@ class IPCProvider : IDisposable
             move.CancelPathfinding();
             followPath.Stop();
         });
-        RegisterFunc("Path.IsRunning", () => followPath.Waypoints.Count > 0 || move.TaskInBusy);
-        RegisterFunc("Path.NumWaypoints", () => followPath.Waypoints.Count);
-        RegisterFunc("Path.ListWaypoints", () => followPath.Waypoints);
+        RegisterFunc("Path.IsRunning",          () => followPath.Waypoints.Count > 0 || move.TaskInProgress || followPath.IsStuck);
+        RegisterFunc("Path.NumWaypoints",       () => followPath.Waypoints.Count);
+        RegisterFunc("Path.ListWaypoints",      () => followPath.Waypoints);
         RegisterFunc("Path.GetMovementAllowed", () => followPath.MovementAllowed);
         RegisterAction("Path.SetMovementAllowed", (bool v) => followPath.MovementAllowed = v);
         RegisterFunc("Path.GetAlignCamera", () => Service.Config.AlignCameraToMovement);

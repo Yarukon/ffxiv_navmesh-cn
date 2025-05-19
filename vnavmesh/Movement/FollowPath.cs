@@ -16,10 +16,11 @@ public class FollowPath : IDisposable
     private const float SIGNIFICANT_MOVEMENT_THRESHOLD = 3f; // 显著移动阈值
     private const int   STUCK_COUNTER_THRESHOLD        = 3;  // 连续几次检测卡住才判定为真卡住
 
-    public bool          MovementAllowed = true;
-    public bool          IgnoreDeltaY;
-    public float         Tolerance = 0.25f;
-    public List<Vector3> Waypoints = [];
+    public bool          MovementAllowed { get; set; } = true;
+    public bool          IgnoreDeltaY    { get; set; }
+    public float         Tolerance       { get; set; } = 1f;
+    public List<Vector3> Waypoints       { get; set; } = [];
+    public bool          IsStuck         { get; set; }
 
     private readonly IDalamudPluginInterface _dalamud;
     private readonly NavmeshManager          _manager;
@@ -34,7 +35,6 @@ public class FollowPath : IDisposable
     private          DateTime _lastMovementTime;
     private          DateTime _lastStuckCheckTime;
     private          int      _stuckCounter;
-    private          bool     _isStuck;
     private readonly TimeSpan _stuckCheckInterval = TimeSpan.FromSeconds(1f); // 卡住检测间隔
     private readonly TimeSpan _stuckTimeout       = TimeSpan.FromSeconds(2f); // 判定为卡住的时间阈值
     private          int      _recoveryAttempts;
@@ -128,7 +128,7 @@ public class FollowPath : IDisposable
             CheckForStuck(currentPos, now);
 
             // 如果检测到卡住，尝试恢复
-            if (_isStuck)
+            if (IsStuck)
                 TryRecoverFromStuck(currentPos, now);
             else if (!_inRecoveryProcess)
             {
@@ -170,7 +170,7 @@ public class FollowPath : IDisposable
                 _movement.Enabled = MovementAllowed;
 
             // 如果正在执行恢复动作，使用恢复方向
-            if (_isStuck && _recoveryDirection.HasValue && now < _nextRecoveryTime)
+            if (IsStuck && _recoveryDirection.HasValue && now < _nextRecoveryTime)
                 _movement.DesiredPosition = player.Position + _recoveryDirection.Value;
             else
                 _movement.DesiredPosition = Waypoints[0];
@@ -233,7 +233,7 @@ public class FollowPath : IDisposable
                 _lastSignificantPosition = currentPos;
                 _lastMovementTime        = now;
                 _stuckCounter            = 0;
-                _isStuck                 = false;
+                IsStuck                 = false;
             }
         }
 
@@ -245,7 +245,7 @@ public class FollowPath : IDisposable
             // 如果连续多次检测都没有移动，且超过了超时时间，则判定为卡住
             if (_stuckCounter >= STUCK_COUNTER_THRESHOLD && now - _lastMovementTime > _stuckTimeout)
             {
-                if (!_isStuck)
+                if (!IsStuck)
                 {
                     // 再次检查是否在计算路径，防止误判
                     if (Plugin.Instance().AsyncMove.TaskInBusy || _pathRecalculationRequested)
@@ -256,7 +256,7 @@ public class FollowPath : IDisposable
                     }
 
                     Service.Log.Debug($"检测到导航卡住: 位置 {currentPos}, 未移动时间: {(now - _lastMovementTime).TotalSeconds:F1}秒, 移动模式: {(_isFlying ? "飞行" : "地面")}");
-                    _isStuck           = true;
+                    IsStuck           = true;
                     _stuckStartTime    = now;
                     _inRecoveryProcess = true;
 
@@ -277,7 +277,7 @@ public class FollowPath : IDisposable
         }
 
         // 检查是否长时间卡住（超过8秒），无论是否有微小移动
-        if (_isStuck && now - _stuckStartTime > TimeSpan.FromSeconds(8) && now - _lastSignificantMovementTime > TimeSpan.FromSeconds(4))
+        if (IsStuck && now - _stuckStartTime > TimeSpan.FromSeconds(8) && now - _lastSignificantMovementTime > TimeSpan.FromSeconds(4))
         {
             // 确保不在路径计算中再触发重新计算
             if (!Plugin.Instance().AsyncMove.TaskInBusy && !_pathRecalculationRequested)
@@ -369,7 +369,7 @@ public class FollowPath : IDisposable
             _movement.Enabled = MovementAllowed;
 
             // 重置卡住状态，但保持在恢复过程中的标记
-            _isStuck          = false;
+            IsStuck          = false;
             _stuckCounter     = 0;
             _recoveryAttempts = 0;
 
@@ -607,7 +607,7 @@ public class FollowPath : IDisposable
                     Service.Log.Debug($"跳跃前进有效，移动了 {jumpMovementDistance:F2} 距离，重置卡住状态");
 
                     // 重置卡住状态，但保留当前位置作为新的参考点
-                    _isStuck                 = false;
+                    IsStuck                 = false;
                     _stuckCounter            = 0;
                     _recoveryAttempts        = 0;
                     _inRecoveryProcess       = false;
@@ -773,7 +773,7 @@ public class FollowPath : IDisposable
 
     private void ResetStuckState()
     {
-        _isStuck                    = false;
+        IsStuck                    = false;
         _stuckCounter               = 0;
         _recoveryAttempts           = 0;
         _recoveryDirection          = null;

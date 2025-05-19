@@ -87,41 +87,40 @@ public class AsyncMoveRequest : IDisposable
     /// </summary>
     public void Update()
     {
-        if (PendingTask is { IsCompleted: true })
+        if (PendingTask is not { IsCompleted: true }) return;
+        
+        Service.Log.Information("寻路完成");
+
+        try
         {
-            Service.Log.Information("寻路完成");
-
-            try
-            {
-                var isSuccess = PendingTask.Result.Count > 1;
+            var isSuccess = PendingTask.Result.Count > 1;
                 
-                if (!isSuccess)
+            if (!isSuccess)
+            {
+                Service.Log.Warning("计算的路径无效或过短");
+                if (RecalculationAttempts >= MaxRecalculationAttempts)
                 {
-                    Service.Log.Warning("计算的路径无效或过短");
-                    if (RecalculationAttempts >= MaxRecalculationAttempts)
-                    {
-                        Service.Log.Error($"多次路径重新计算失败，停止尝试 (尝试次数: {RecalculationAttempts})");
-                        RecalculationAttempts = 0;
-                    }
-                }
-                else
-                {
+                    Service.Log.Error($"多次路径重新计算失败，停止尝试 (尝试次数: {RecalculationAttempts})");
                     RecalculationAttempts = 0;
-                    FollowPath.Move(PendingTask.Result, !PendingFly);
                 }
-                
-                // 触发路径计算完成事件
-                OnPathCalculationComplete?.Invoke(PendingTask.Result, isSuccess);
             }
-            catch (Exception ex)
+            else
             {
-                Plugin.DuoLog(ex, "寻路失败");
-                OnPathCalculationComplete?.Invoke(new List<Vector3>(), false);
+                RecalculationAttempts = 0;
+                FollowPath.Move(PendingTask.Result, !PendingFly);
             }
-
-            PendingTask.Dispose();
-            PendingTask = null;
+                
+            // 触发路径计算完成事件
+            OnPathCalculationComplete?.Invoke(PendingTask.Result, isSuccess);
         }
+        catch (Exception ex)
+        {
+            Plugin.DuoLog(ex, "寻路失败");
+            OnPathCalculationComplete?.Invoke([], false);
+        }
+
+        PendingTask.Dispose();
+        PendingTask = null;
     }
 
     /// <summary>

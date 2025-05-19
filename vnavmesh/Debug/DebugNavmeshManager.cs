@@ -137,7 +137,9 @@ internal class DebugNavmeshManager : IDisposable
 
         using (ImRaii.PushIndent())
         {
-            ImGui.Checkbox("允许导航过程中手动干预移动", ref FollowPath.MovementAllowed);
+            var isMovementAllowed = FollowPath.MovementAllowed;
+            if (ImGui.Checkbox("允许导航过程中手动干预移动", ref isMovementAllowed))
+                FollowPath.MovementAllowed = isMovementAllowed;
             ImGui.Checkbox("使用光线投射算法",      ref NavmeshManager.UseRaycasts);
             ImGui.Checkbox("使用拉绳算法",        ref NavmeshManager.UseStringPulling);
         }
