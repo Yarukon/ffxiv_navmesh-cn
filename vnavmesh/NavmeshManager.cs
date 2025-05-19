@@ -159,8 +159,7 @@ public sealed class NavmeshManager : IDisposable
         if (currentCTS == null)
             throw new Exception("无法开始查询, 导航数据仍在构建过程中");
 
-        // 检查常用路径缓存
-        if (flying && Service.Config.EnablePathCachePrewarming)
+        if (flying)
         {
             var pathKey = GetPathKey(from, to);
             if (commonPathsCache.TryGetValue(pathKey, out var cachedPath))
@@ -192,9 +191,9 @@ public sealed class NavmeshManager : IDisposable
             Log($"寻路完成: {path.Count} 个路径点");
 
             // 如果路径有效且启用了缓存，将路径添加到缓存
-            if (flying && path.Count > 0 && Service.Config.EnablePathCachePrewarming)
+            if (flying && path.Count > 0)
             {
-                var pathKey                                                           = GetPathKey(from, to);
+                var pathKey = GetPathKey(from, to);
                 commonPathsCache.TryAdd(pathKey, path);
             }
 
@@ -240,8 +239,9 @@ public sealed class NavmeshManager : IDisposable
 
         bool inBounds(Vector3 vert)
         {
-            return mapBounds is not { } aabb || (vert.X >= aabb.Min.X && vert.Y >= aabb.Min.Y && vert.Z >= aabb.Min.Z && vert.X <= aabb.Max.X &&
-                                                 vert.Y <= aabb.Max.Y && vert.Z <= aabb.Max.Z);
+            return mapBounds is not { } aabb ||
+                   (vert.X >= aabb.Min.X && vert.Y >= aabb.Min.Y && vert.Z >= aabb.Min.Z && vert.X <= aabb.Max.X &&
+                    vert.Y <= aabb.Max.Y && vert.Z <= aabb.Max.Z);
         }
     }
 
