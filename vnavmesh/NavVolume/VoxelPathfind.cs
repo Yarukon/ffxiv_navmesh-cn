@@ -7,39 +7,32 @@ using System.Threading;
 
 namespace Navmesh.NavVolume;
 
-public class VoxelPathfind
+public class VoxelPathfind(VoxelMap volume)
 {
     private const    int                    DefaultInitialCapacity = 1024;
-    private readonly List<Node>             Nodes;
-    private readonly Dictionary<ulong, int> NodeLookup;
-    private readonly List<int>              OpenList;
+    private readonly List<Node>             Nodes                  = new(DefaultInitialCapacity);
+    private readonly Dictionary<ulong, int> NodeLookup             = new(DefaultInitialCapacity);
+    private readonly List<int>              OpenList               = new(DefaultInitialCapacity);
     private          int                    BestNodeIndex;
     private          ulong                  GoalVoxel;
     private          Vector3                GoalPos;
     private          bool                   UseRaycast;
 
-    private static readonly ThreadLocal<Random> ThreadLocalRandom = new(() => new Random());
-
+    public static float RandomThisTime { get; set; }
+    
     private const bool  AllowReopen    = false; // this is extremely expensive and doesn't seem to actually improve the result
     private const float RaycastLimitSq = float.MaxValue;
 
-    public VoxelMap Volume { get; }
+    public VoxelMap Volume { get; } = volume;
 
     public Span<Node> NodeSpan =>
         CollectionsMarshal.AsSpan(Nodes);
-
-    public VoxelPathfind(VoxelMap volume)
-    {
-        Volume     = volume;
-        Nodes      = new List<Node>(DefaultInitialCapacity);
-        NodeLookup = new Dictionary<ulong, int>(DefaultInitialCapacity);
-        OpenList   = new List<int>(DefaultInitialCapacity);
-    }
 
     public List<(ulong voxel, Vector3 p)> FindPath(
         ulong fromVoxel, ulong toVoxel, Vector3 fromPos, Vector3 toPos, bool useRaycast, bool returnIntermediatePoints, CancellationToken cancel)
     {
         UseRaycast = useRaycast;
+        GenerateRandomThisTime();
         Start(fromVoxel, toVoxel, fromPos, toPos);
         Execute(cancel);
         return BuildPathToVisitedNode(BestNodeIndex, returnIntermediatePoints);
@@ -330,9 +323,6 @@ public class VoxelPathfind
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float CalculateGScore(ref Node parent, ulong destVoxel, Vector3 destPos, ref int parentIndex)
     {
-        // 使用线程本地随机数
-        var randomFactor = (float)ThreadLocalRandom.Value!.NextDouble() * Service.Config.VoxelPathfindRandomFactor;
-
         float   baseDistance;
         float   parentBaseG;
         Vector3 fromPos;
@@ -367,7 +357,7 @@ public class VoxelPathfind
         var verticalDifference = MathF.Abs(fromPos.Y - destPos.Y);
         var verticalPenalty    = 0.2f * verticalDifference;
 
-        return parentBaseG + baseDistance + randomFactor + verticalPenalty;
+        return parentBaseG + baseDistance + RandomThisTime + verticalPenalty;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -474,6 +464,9 @@ public class VoxelPathfind
 
         return nodeL.GScore > nodeR.GScore; // tie-break towards larger g-values
     }
+
+    public static void GenerateRandomThisTime() =>
+        RandomThisTime = (float)new Random().NextDouble() * Service.Config.VoxelPathfindRandomFactor;
 
     public struct Node
     {
