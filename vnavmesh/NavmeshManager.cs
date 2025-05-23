@@ -32,6 +32,11 @@ public sealed class NavmeshManager : IDisposable
     private volatile float loadTaskProgress = -1;
     private          int   loadTaskProgressBits;
 
+    // 路径计算进度相关字段
+    public           float PathfindProgress => pathfindProgress; // negative if pathfind is not running, otherwise in [0, 1] range  
+    private volatile float pathfindProgress = -1;
+    private          int   pathfindProgressBits;
+
     private CancellationTokenSource? currentCTS;
     private Task                     lastLoadQueryTask;
 
@@ -163,8 +168,16 @@ public sealed class NavmeshManager : IDisposable
         {
             using var autoDisposeCombined  = combined;
             using var autoDecrementCounter = new OnDispose(() => --numActivePathfinds);
+            using var autoResetProgress    = new OnDispose(() => pathfindProgress = -1);
+
+            // 初始化路径计算进度
+            pathfindProgress = 0;
 
             Log($"启动从 {from} 到 {to} 的寻路");
+            
+            // 创建进度回调委托
+            Action<float> progressCallback = (progress) => UpdatePathfindProgressAtomically(progress);
+            
             var path = await Task.Run(() =>
             {
                 combined.Token.ThrowIfCancellationRequested();
@@ -172,7 +185,7 @@ public sealed class NavmeshManager : IDisposable
                     throw new Exception("无法寻路, 导航网格构建失败");
                 Log($"执行从 {from} 到 {to} 的寻路");
                 return flying
-                           ? Query.PathfindVolume(from, to, UseRaycasts, UseStringPulling, combined.Token)
+                           ? Query.PathfindVolume(from, to, UseRaycasts, UseStringPulling, progressCallback, combined.Token)
                            : Query.PathfindMesh(from, to, UseRaycasts, UseStringPulling, combined.Token);
             }, combined.Token);
             Log($"寻路完成: {path.Count} 个路径点");
@@ -334,6 +347,22 @@ public sealed class NavmeshManager : IDisposable
             if (Interlocked.CompareExchange(ref loadTaskProgressBits, newBits, currentBits) == currentBits)
             {
                 loadTaskProgress = newValue;
+                break;
+            }
+        }
+    }
+
+    private void UpdatePathfindProgressAtomically(float progress)
+    {
+        while (true)
+        {
+            var currentBits = Interlocked.CompareExchange(ref pathfindProgressBits, 0, 0);
+
+            // 直接设置新进度值
+            var newBits = BitConverter.SingleToInt32Bits(progress);
+            if (Interlocked.CompareExchange(ref pathfindProgressBits, newBits, currentBits) == currentBits)
+            {
+                pathfindProgress = progress;
                 break;
             }
         }

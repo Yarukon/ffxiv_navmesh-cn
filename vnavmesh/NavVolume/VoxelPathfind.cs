@@ -29,12 +29,13 @@ public class VoxelPathfind(VoxelMap volume)
         CollectionsMarshal.AsSpan(Nodes);
 
     public List<(ulong voxel, Vector3 p)> FindPath(
-        ulong fromVoxel, ulong toVoxel, Vector3 fromPos, Vector3 toPos, bool useRaycast, bool returnIntermediatePoints, CancellationToken cancel)
+        ulong fromVoxel, ulong toVoxel, Vector3 fromPos, Vector3 toPos, bool useRaycast, bool returnIntermediatePoints, 
+        Action<float>? progressCallback, CancellationToken cancel)
     {
         UseRaycast = useRaycast;
         GenerateRandomThisTime();
         Start(fromVoxel, toVoxel, fromPos, toPos);
-        Execute(cancel);
+        Execute(cancel, progressCallback);
         return BuildPathToVisitedNode(BestNodeIndex, returnIntermediatePoints);
     }
 
@@ -70,14 +71,18 @@ public class VoxelPathfind(VoxelMap volume)
         AddToOpen(0);
     }
 
-    public void Execute(CancellationToken cancel, int maxSteps = 1000000)
+    public void Execute(CancellationToken cancel, Action<float>? progressCallback = null, int maxSteps = 1000000)
     {
         for (var i = 0; i < maxSteps; ++i)
         {
             if (!ExecuteStep())
                 return;
             if ((i & 0x3ff) == 0)
+            {
                 cancel.ThrowIfCancellationRequested();
+                // 报告进度：当前步骤数 / 最大步骤数
+                progressCallback?.Invoke((float)i / maxSteps);
+            }
         }
     }
 
