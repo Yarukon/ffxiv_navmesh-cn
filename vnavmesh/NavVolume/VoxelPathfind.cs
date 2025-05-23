@@ -35,7 +35,7 @@ public class VoxelPathfind(VoxelMap volume)
         UseRaycast = useRaycast;
         GenerateRandomThisTime();
         Start(fromVoxel, toVoxel, fromPos, toPos);
-        Execute(cancel, progressCallback);
+        Execute(cancel, progressCallback, CalculateDynamicMaxSteps(fromPos, toPos));
         return BuildPathToVisitedNode(BestNodeIndex, returnIntermediatePoints);
     }
 
@@ -80,7 +80,6 @@ public class VoxelPathfind(VoxelMap volume)
             if ((i & 0x3ff) == 0)
             {
                 cancel.ThrowIfCancellationRequested();
-                // 报告进度：当前步骤数 / 最大步骤数
                 progressCallback?.Invoke((float)i / maxSteps);
             }
         }
@@ -96,6 +95,10 @@ public class VoxelPathfind(VoxelMap volume)
 
         var     curNodeIndex = PopMinOpen();
         ref var curNode      = ref nodeSpan[curNodeIndex];
+
+        // 早期终止检查：如果当前最佳节点足够接近目标，提前结束搜索
+        if (IsCloseEnoughToGoal(nodeSpan[BestNodeIndex].Position))
+            return false;
 
         var curVoxel = curNode.Voxel;
         VisitNeighboursInAllDirections(curNodeIndex, curVoxel);
@@ -368,6 +371,26 @@ public class VoxelPathfind(VoxelMap volume)
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float HeuristicDistance(ulong nodeVoxel, Vector3 v) =>
         nodeVoxel != GoalVoxel ? (v - GoalPos).Length() * 0.999f : 0;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int CalculateDynamicMaxSteps(Vector3 fromPos, Vector3 toPos)
+    {
+        var distance = (fromPos - toPos).Length();
+        var config = Service.Config;
+        
+        var dynamicSteps = (int)(config.VoxelPathfindMinSteps + 
+                                (distance * config.VoxelPathfindMaxStepsMultiplier * config.VoxelPathfindMaxStepsBaseFactor));
+        
+        // 最多 100 万步
+        return Math.Min(Math.Max(dynamicSteps, config.VoxelPathfindMinSteps), 100_0000);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool IsCloseEnoughToGoal(Vector3 currentPos)
+    {
+        var distanceToGoal = (currentPos - GoalPos).Length();
+        return distanceToGoal <= Service.Config.VoxelPathfindEarlyTerminationDistance;
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void AddToOpen(int nodeIndex)
