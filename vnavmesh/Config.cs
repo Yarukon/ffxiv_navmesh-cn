@@ -118,15 +118,27 @@ public class Config
             NotifyModified();
 
         ImGui.Text("地面路径随机");
+
+        ImGui.Separator();
+        ImGui.Spacing();
         // Random Path Gen
         if (ImGui.Checkbox("对路径使用随机算法", ref UseRandomPathGen))
             NotifyModified();
 
         if (UseRandomPathGen)
         {
+
+            ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("路径请求随机程度", ref RandomPath_MaxRandomRange, 0.0f, 1.0f))
+            {
+                NotifyModified();
+                (NavmeshQuery._filter2 as RandomizedQueryFilter)!.RebuildRandomTable();
+            }
+
+            ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
             if (ImGui.BeginCombo("随机路径模式", GetRandomPathModeName(RandomPath_Mode)))
             {
-                foreach(RandomPathMode mode in Enum.GetValues(typeof(RandomPathMode)))
+                foreach (RandomPathMode mode in Enum.GetValues(typeof(RandomPathMode)))
                 {
                     if (ImGui.Selectable(GetRandomPathModeName(mode)))
                     {
@@ -134,12 +146,8 @@ public class Config
                         NotifyModified();
                     }
                 }
-            }
 
-            if (ImGui.SliderFloat("路径请求随机程度", ref RandomPath_MaxRandomRange, 0.0f, 1.0f))
-            {
-                NotifyModified();
-                (NavmeshQuery._filter2 as RandomizedQueryFilter)!.RebuildRandomTable();
+                ImGui.EndCombo();
             }
 
             bool valueChanged = false;
@@ -147,24 +155,34 @@ public class Config
             switch (RandomPath_Mode)
             {
                 case RandomPathMode.RECAST_LINEPULL:
+                    ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
                     valueChanged |= ImGui.SliderFloat("路径后处理随机程度", ref RandomPath_Randomness, 0.0f, 1.0f);
+                    ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
                     valueChanged |= ImGui.SliderInt("每段最少插入点数", ref RandomPath_MinPointsPerSeg, 1, 10);
+                    ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
                     valueChanged |= ImGui.SliderInt("每段最多插入点数", ref RandomPath_MaxPointsPerSeg, 1, 10);
+                    ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
                     valueChanged |= ImGui.SliderFloat("最大偏移距离比例 (相对于两点间距离)", ref RandomPath_MaxDeviationRatio, 0f, 1f);
 
+                    ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
                     if (ImGui.Checkbox("使用路径置中", ref RandomPath_UsePathCentering))
                         NotifyModified();
 
                     if (RandomPath_UsePathCentering)
                     {
+                        ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
                         valueChanged |= ImGui.SliderFloat("置中强度", ref RandomPath_CenteringStrength, 0f, 1f);
+                        ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
                         valueChanged |= ImGui.SliderFloat("最大置中距离", ref RandomPath_MaxCenteringDist, 0f, 10f);
+                        ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
                         valueChanged |= ImGui.SliderFloat("置中后随机偏移比例", ref RandomPath_RandomOffsetRatio, 0f, 0.5f);
                     }
                     break;
 
                 case RandomPathMode.CUSTOM_LINEPULL:
+                    ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
                     valueChanged |= ImGui.SliderFloat("路径直接程度", ref RandomPath_CPull_Directness, 0f, 1f);
+                    ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
                     valueChanged |= ImGui.SliderFloat("路径自然程度", ref RandomPath_CPull_Natrualness, 0f, 1f);
                     break;
 
