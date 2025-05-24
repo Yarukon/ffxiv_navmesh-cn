@@ -86,25 +86,34 @@ public class NavmeshQuery
         {
             if (Service.Config.UseRandomPathGen)
             {
-                var pathList = _lastPath.Select(r => MeshQuery.GetAttachedNavMesh().GetPolyCenter(r)).ToList();                
-                
-                var straightPath = new List<DtStraightPath>();
-                var success = MeshQuery.FindStraightPath(from.SystemToRecast(), endPos, _lastPath, ref straightPath, 1024, DtStraightPathOptions.DT_STRAIGHTPATH_AREA_CROSSINGS);
-                if (success.Failed())
-                    Service.Log.Error($"从 {from} ({startRef:X}) 到 {to} ({endRef:X}) 的路径查找失败：无法找到直线路径 ({success.Value:X})");
+                if (Service.Config.RandomPath_Mode == Config.RandomPathMode.RECAST_LINEPULL)
+                {
+                    var pathList = _lastPath.Select(r => MeshQuery.GetAttachedNavMesh().GetPolyCenter(r)).ToList();
 
-                /*Plugin.OriginalPath_Locked = true;
-                Plugin.OriginalPath = [.. straightPath.Select(p => p.pos.RecastToSystem())];
-                Plugin.OriginalPath_Locked = false;*/
+                    var straightPath = new List<DtStraightPath>();
+                    var success = MeshQuery.FindStraightPath(from.SystemToRecast(), endPos, _lastPath, ref straightPath, 1024, DtStraightPathOptions.DT_STRAIGHTPATH_AREA_CROSSINGS);
+                    if (success.Failed())
+                        Service.Log.Error($"从 {from} ({startRef:X}) 到 {to} ({endRef:X}) 的路径查找失败：无法找到直线路径 ({success.Value:X})");
 
-                _randomizer.SetPointGenerationParameters(Service.Config.RandomPath_MinPointsPerSeg, Service.Config.RandomPath_MaxPointsPerSeg);
-                _randomizer.SetRandomizationParameters(3f, Service.Config.RandomPath_MaxDeviationRatio, Service.Config.RandomPath_Randomness);
-                _randomizer.SetPathCenteringParameters(Service.Config.RandomPath_UsePathCentering, Service.Config.RandomPath_CenteringStrength, Service.Config.RandomPath_MaxCenteringDist, Service.Config.RandomPath_RandomOffsetRatio);
-                
-                var res = _randomizer.RandomizePath([.. straightPath.Select(p => p.pos.RecastToSystem())], _filter);
-                res.Add(endPos.RecastToSystem());
+                    /*Plugin.OriginalPath_Locked = true;
+                    Plugin.OriginalPath = [.. straightPath.Select(p => p.pos.RecastToSystem())];
+                    Plugin.OriginalPath_Locked = false;*/
 
-                return res;
+                    _randomizer.SetPointGenerationParameters(Service.Config.RandomPath_MinPointsPerSeg, Service.Config.RandomPath_MaxPointsPerSeg);
+                    _randomizer.SetRandomizationParameters(3f, Service.Config.RandomPath_MaxDeviationRatio, Service.Config.RandomPath_Randomness);
+                    _randomizer.SetPathCenteringParameters(Service.Config.RandomPath_UsePathCentering, Service.Config.RandomPath_CenteringStrength, Service.Config.RandomPath_MaxCenteringDist, Service.Config.RandomPath_RandomOffsetRatio);
+
+                    var res = _randomizer.RandomizePath([.. straightPath.Select(p => p.pos.RecastToSystem())], _filter);
+                    res.Add(endPos.RecastToSystem());
+
+                    return res;
+                } else
+                {
+                    var pathList = _lastPath.Select(r => MeshQuery.GetAttachedNavMesh().GetPolyCenter(r)).ToList();
+                    var res = _directPathGen.GenerateDirectPath(from.SystemToRecast(), to.SystemToRecast(), pathList, _filter, Service.Config.RandomPath_CPull_Directness, Service.Config.RandomPath_CPull_Natrualness);
+
+                    return [.. res.Select(p => p.RecastToSystem())];
+                }
             }
             else
             {
