@@ -2,7 +2,7 @@ using ImGuiNET;
 using Newtonsoft.Json.Linq;
 using System;
 using System.IO;
-using FFXIVClientStructs.FFXIV.Client.UI;
+using Dalamud.Interface.Utility;
 
 namespace Navmesh;
 
@@ -11,7 +11,7 @@ public class Config
     private const int _version = 1;
 
     public bool AutoLoadNavmesh = true;
-    public bool EnableDTR = true;
+    public bool EnableDTR       = true;
     public bool AlignCameraToMovement;
     public bool ShowWaypoints;
     public bool ForceShowGameCollision;
@@ -29,6 +29,14 @@ public class Config
     public float RandomPath_MaxCenteringDist = 4f;
     public float RandomPath_CenteringStrength = 0.7f;
     public float RandomPath_RandomOffsetRatio = 0.15f;
+    
+    public float VoxelPathfindRandomFactor = 0.5f;
+    
+    // 体素路径查找性能优化参数
+    public float VoxelPathfindMaxStepsBaseFactor = 2.0f;        // 基础步数倍数因子
+    public float VoxelPathfindEarlyTerminationDistance = 2.0f;  // 早期终止距离阈值
+    public int   VoxelPathfindMinSteps = 5000;                  // 最小步数保证
+    public float VoxelPathfindMaxStepsMultiplier = 1000.0f;     // 距离步数乘数
 
     public event Action? Modified;
 
@@ -36,17 +44,70 @@ public class Config
 
     public void Draw()
     {
+        ImGui.Spacing();
+        
+        ImGui.Text("一般");
+        
+        ImGui.Separator();
+        ImGui.Spacing();
+        
         if (ImGui.Checkbox("切换区域时, 自动加载/构建区域导航数据", ref AutoLoadNavmesh))
             NotifyModified();
-        if (ImGui.Checkbox("启用服务器状态栏信息", ref EnableDTR))
+        
+        if (ImGui.Checkbox("在服务器状态栏显示导航信息", ref EnableDTR))
             NotifyModified();
+        
+        ImGui.NewLine();
+        
+        ImGui.Text("操控");
+        
+        ImGui.Separator();
+        ImGui.Spacing();
+        
         if (ImGui.Checkbox("将镜头面向对齐前进方向", ref AlignCameraToMovement))
             NotifyModified();
-        if (ImGui.Checkbox("显示即将去往的各目的地点", ref ShowWaypoints))
-            NotifyModified();
-        if (ImGui.Checkbox("始终开启游戏内碰撞显示", ref ForceShowGameCollision))
-            NotifyModified();
+        
         if (ImGui.Checkbox("当尝试操控游戏角色时, 自动取消寻路任务", ref CancelMoveOnUserInput))
+            NotifyModified();
+        
+        ImGui.NewLine();
+        
+        ImGui.Text("显示");
+        
+        ImGui.Separator();
+        ImGui.Spacing();
+        
+        if (ImGui.Checkbox("显示导航路径点", ref ShowWaypoints))
+            NotifyModified();
+        
+        if (ImGui.Checkbox("强制显示游戏内碰撞体", ref ForceShowGameCollision))
+            NotifyModified();
+        
+        ImGui.NewLine();
+        
+        ImGui.Text("体素导航 (飞行)");
+        
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
+        if (ImGui.SliderFloat("路线随机性", ref VoxelPathfindRandomFactor, 0.1f, 1f, "%.1f"))
+            NotifyModified();
+        
+        ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
+        if (ImGui.SliderFloat("最大步数基础因子", ref VoxelPathfindMaxStepsBaseFactor, 1.0f, 5.0f, "%.1f"))
+            NotifyModified();
+            
+        ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
+        if (ImGui.SliderFloat("早期终止距离", ref VoxelPathfindEarlyTerminationDistance, 0.5f, 10.0f, "%.1f"))
+            NotifyModified();
+            
+        ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
+        if (ImGui.SliderInt("最小保证步数", ref VoxelPathfindMinSteps, 1000, 20000, "%d"))
+            NotifyModified();
+            
+        ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
+        if (ImGui.SliderFloat("距离步数乘数", ref VoxelPathfindMaxStepsMultiplier, 100.0f, 5000.0f, "%.0f"))
             NotifyModified();
         if (ImGui.Checkbox("对路径使用随机算法", ref UseRandomPathGen))
             NotifyModified();
@@ -128,8 +189,5 @@ public class Config
         }
     }
 
-    private static JObject ConvertConfig(JObject payload, int version)
-    {
-        return payload;
-    }
+    private static JObject ConvertConfig(JObject payload, int version) => payload;
 }

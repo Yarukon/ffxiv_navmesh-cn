@@ -9,6 +9,7 @@ using ImGuiNET;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Navmesh.Utilities;
 
 namespace Navmesh.Debug;
 

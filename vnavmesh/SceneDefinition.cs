@@ -2,6 +2,7 @@
 using FFXIVClientStructs.FFXIV.Client.LayoutEngine.Layer;
 using System.Collections.Generic;
 using System.Numerics;
+using Navmesh.Utilities;
 
 namespace Navmesh;
 

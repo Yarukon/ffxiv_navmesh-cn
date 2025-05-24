@@ -1,14 +1,18 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Game.ClientState.Conditions;
 using FFXIVClientStructs.FFXIV.Client.LayoutEngine;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision.Math;
 using Lumina.Excel.Sheets;
+using Navmesh.NavVolume;
+using Navmesh.Utilities;
 using Action = System.Action;
 
 namespace Navmesh;
@@ -28,13 +32,18 @@ public sealed class NavmeshManager : IDisposable
     private volatile float loadTaskProgress = -1;
     private          int   loadTaskProgressBits;
 
+    // 路径计算进度相关字段
+    public           float PathfindProgress => pathfindProgress; // negative if pathfind is not running, otherwise in [0, 1] range  
+    private volatile float pathfindProgress = -1;
+    private          int   pathfindProgressBits;
+
     private CancellationTokenSource? currentCTS;
-    private Task lastLoadQueryTask;
+    private Task                     lastLoadQueryTask;
 
     public  bool PathfindInProgress        => numActivePathfinds > 0;
     public  int  NumQueuedPathfindRequests => numActivePathfinds > 0 ? numActivePathfinds - 1 : 0;
     private int  numActivePathfinds;
-
+    
     private readonly DirectoryInfo cacheDirectory;
 
     public NavmeshManager(DirectoryInfo cacheDir)
@@ -107,7 +116,7 @@ public sealed class NavmeshManager : IDisposable
                 Log($"开始构建导航网格 '{cacheKey}'");
                 var navmesh = await Task.Run(async () => await BuildNavmeshAsync(scene, cacheKey, allowLoadFromCache, cancel), cancel);
                 Log($"导航网格加载完成: '{cacheKey}'");
-                
+
                 Navmesh = navmesh;
                 Query   = new(Navmesh);
                 OnNavmeshChanged?.Invoke(Navmesh, Query);
@@ -115,6 +124,25 @@ public sealed class NavmeshManager : IDisposable
         }
 
         return true;
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static string GetPathKey(Vector3 from, Vector3 to)
+    {
+        // 使用四舍五入可以让邻近位置的查询复用相同的路径
+        var roundedFrom = new Vector3(
+            MathF.Round(from.X * 0.1f) * 10.0f,
+            MathF.Round(from.Y * 0.1f) * 10.0f,
+            MathF.Round(from.Z * 0.1f) * 10.0f
+        );
+
+        var roundedTo = new Vector3(
+            MathF.Round(to.X * 0.1f) * 10.0f,
+            MathF.Round(to.Y * 0.1f) * 10.0f,
+            MathF.Round(to.Z * 0.1f) * 10.0f
+        );
+
+        return $"{roundedFrom.X},{roundedFrom.Y},{roundedFrom.Z}->{roundedTo.X},{roundedTo.Y},{roundedTo.Z}";
     }
 
     internal void ReplaceMesh(Navmesh mesh)
@@ -125,7 +153,7 @@ public sealed class NavmeshManager : IDisposable
         OnNavmeshChanged?.Invoke(Navmesh, Query);
     }
 
-    private static bool InCutscene => 
+    private static bool InCutscene =>
         Service.Condition[ConditionFlag.WatchingCutscene] || Service.Condition[ConditionFlag.OccupiedInCutSceneEvent];
 
     public Task<List<Vector3>> QueryPath(Vector3 from, Vector3 to, bool flying, CancellationToken externalCancel = default)
@@ -140,8 +168,16 @@ public sealed class NavmeshManager : IDisposable
         {
             using var autoDisposeCombined  = combined;
             using var autoDecrementCounter = new OnDispose(() => --numActivePathfinds);
-            
+            using var autoResetProgress    = new OnDispose(() => pathfindProgress = -1);
+
+            // 初始化路径计算进度
+            pathfindProgress = 0;
+
             Log($"启动从 {from} 到 {to} 的寻路");
+            
+            // 创建进度回调委托
+            Action<float> progressCallback = (progress) => UpdatePathfindProgressAtomically(progress);
+            
             var path = await Task.Run(() =>
             {
                 combined.Token.ThrowIfCancellationRequested();
@@ -149,11 +185,11 @@ public sealed class NavmeshManager : IDisposable
                     throw new Exception("无法寻路, 导航网格构建失败");
                 Log($"执行从 {from} 到 {to} 的寻路");
                 return flying
-                           ? Query.PathfindVolume(from, to, UseRaycasts, UseStringPulling, combined.Token)
+                           ? Query.PathfindVolume(from, to, UseRaycasts, UseStringPulling, progressCallback, combined.Token)
                            : Query.PathfindMesh(from, to, UseRaycasts, UseStringPulling, combined.Token);
             }, combined.Token);
             Log($"寻路完成: {path.Count} 个路径点");
-            
+
             return path;
         }, combined.Token);
     }
@@ -194,9 +230,12 @@ public sealed class NavmeshManager : IDisposable
         Service.Log.Debug($"生成导航位图 '{filename}' @ {startingPos}: {bitmap.MinBounds}-{bitmap.MaxBounds}");
         return (bitmap.MinBounds, bitmap.MaxBounds);
 
-        bool inBounds(Vector3 vert) =>
-            mapBounds is not { } aabb || (vert.X >= aabb.Min.X && vert.Y >= aabb.Min.Y && vert.Z >= aabb.Min.Z && vert.X <= aabb.Max.X &&
-                                          vert.Y <= aabb.Max.Y && vert.Z <= aabb.Max.Z);
+        bool inBounds(Vector3 vert)
+        {
+            return mapBounds is not { } aabb ||
+                   (vert.X >= aabb.Min.X && vert.Y >= aabb.Min.Y && vert.Z >= aabb.Min.Z && vert.X <= aabb.Max.X &&
+                    vert.Y <= aabb.Max.Y && vert.Z <= aabb.Max.Z);
+        }
     }
 
     private static unsafe string GetCurrentKey()
@@ -238,6 +277,7 @@ public sealed class NavmeshManager : IDisposable
             OnNavmeshChanged?.Invoke(null, null);
             Query   = null;
             Navmesh = null;
+            
         }, CancellationToken.None);
     }
 
@@ -312,6 +352,22 @@ public sealed class NavmeshManager : IDisposable
         }
     }
 
+    private void UpdatePathfindProgressAtomically(float progress)
+    {
+        while (true)
+        {
+            var currentBits = Interlocked.CompareExchange(ref pathfindProgressBits, 0, 0);
+
+            // 直接设置新进度值
+            var newBits = BitConverter.SingleToInt32Bits(progress);
+            if (Interlocked.CompareExchange(ref pathfindProgressBits, newBits, currentBits) == currentBits)
+            {
+                pathfindProgress = progress;
+                break;
+            }
+        }
+    }
+
     private Navmesh BuildNavmesh(SceneDefinition scene, string cacheKey, bool allowLoadFromCache, CancellationToken cancel) =>
         BuildNavmeshAsync(scene, cacheKey, allowLoadFromCache, cancel).GetAwaiter().GetResult();
 
@@ -355,7 +411,7 @@ public sealed class NavmeshManager : IDisposable
         return res;
     }
 
-    private static void Log(string message) => 
+    private static void Log(string message) =>
         Service.Log.Debug($"[NavmeshManager] [{Environment.CurrentManagedThreadId}] {message}");
 
     private static void LogTaskError(Task task)
@@ -370,7 +426,7 @@ public sealed class NavmeshManager : IDisposable
         {
             Log($"异步加载缓存: {cachePath}");
             await using var stream = new FileStream(cachePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true);
-            using var reader = new BinaryReader(stream);
+            using var       reader = new BinaryReader(stream);
             return await Task.Run(() => Navmesh.Deserialize(reader, version), cancel);
         }
         catch (Exception ex)
@@ -389,9 +445,6 @@ public sealed class NavmeshManager : IDisposable
             await using var writer = new BinaryWriter(stream);
             await Task.Run(() => navmesh.Serialize(writer), cancel);
         }
-        catch (Exception ex)
-        {
-            Log($"异步写入缓存失败: {ex}");
-        }
+        catch (Exception ex) { Log($"异步写入缓存失败: {ex}"); }
     }
 }

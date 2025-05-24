@@ -3,34 +3,37 @@ using System;
 
 namespace Navmesh;
 
-public class DTRProvider : IDisposable
+public class DTRProvider(NavmeshManager Manager, AsyncMoveRequest AsyncMove) : IDisposable
 {
-    private NavmeshManager _manager;
-    private AsyncMoveRequest _asyncMove;
-    private IDtrBarEntry _dtrBarEntry;
+    private IDtrBarEntry DtrBarEntry { get; } = Service.DtrBar.Get("vnavmesh");
 
-    public DTRProvider(NavmeshManager manager, AsyncMoveRequest asyncMove)
-    {
-        _manager = manager;
-        _asyncMove = asyncMove;
-        _dtrBarEntry = Service.DtrBar.Get("vnavmesh");
-    }
-
-    public void Dispose()
-    {
-        _dtrBarEntry.Remove();
-    }
+    public void Dispose() => 
+        DtrBarEntry.Remove();
 
     public void Update()
     {
-        _dtrBarEntry.Shown = Service.Config.EnableDTR;
-        if (_dtrBarEntry.Shown)
+        DtrBarEntry.Shown = Service.Config.EnableDTR;
+        if (!DtrBarEntry.Shown) return;
+        
+        var loadProgress = Manager.LoadTaskProgress;
+        var status       = loadProgress >= 0 ? $"构建进度 {loadProgress * 100:f0}%" : Manager.Navmesh != null ? "就绪" : "未就绪";
+        
+        if (AsyncMove.TaskInProgress)
         {
-            var loadProgress = _manager.LoadTaskProgress;
-            var status = loadProgress >= 0 ? $"{loadProgress * 100:f0}%" : _manager.Navmesh != null ? "就绪" : "未就绪";
-            if (_asyncMove.TaskInProgress)
-                status = "寻路中";
-            _dtrBarEntry.Text = "导航: " + status;
+            var pathfindProgress = Manager.PathfindProgress;
+            if (pathfindProgress >= 0)
+            {
+                // 显示路径计算进度百分比
+                status = $"路径计算 {pathfindProgress * 100:f0}%";
+            }
+            else
+            {
+                // 对于无法获取进度的路径计算（如网格路径），显示队列信息
+                var queuedRequests = Manager.NumQueuedPathfindRequests;
+                status = queuedRequests > 0 ? $"路径计算中 (队列: {queuedRequests})" : "路径计算中";
+            }
         }
+        
+        DtrBarEntry.Text = "导航: " + status;
     }
 }

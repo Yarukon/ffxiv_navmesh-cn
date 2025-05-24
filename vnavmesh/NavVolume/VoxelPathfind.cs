@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -8,197 +9,105 @@ namespace Navmesh.NavVolume;
 
 public class VoxelPathfind(VoxelMap volume)
 {
-    private readonly Random _random       = new();
-    private const    float  _randomFactor = 0.5f;
+    private const    int                    DefaultInitialCapacity = 1024;
+    private readonly List<Node>             Nodes                  = new(DefaultInitialCapacity);
+    private readonly Dictionary<ulong, int> NodeLookup             = new(DefaultInitialCapacity);
+    private readonly List<int>              OpenList               = new(DefaultInitialCapacity);
+    private          int                    BestNodeIndex;
+    private          ulong                  GoalVoxel;
+    private          Vector3                GoalPos;
+    private          bool                   UseRaycast;
 
-    private readonly List<Node>             _nodes      = [];    // grow only (TODO: consider chunked vector)
-    private readonly Dictionary<ulong, int> _nodeLookup = new(); // voxel -> node index
-    private readonly List<int>              _openList   = [];    // heap containing node indices
-    private          int                    _bestNodeIndex;
-    private          ulong                  _goalVoxel;
-    private          Vector3                _goalPos;
-    private          bool                   _useRaycast;
+    public static float RandomThisTime { get; set; }
     
-    private const bool  _allowReopen    = false; // this is extremely expensive and doesn't seem to actually improve the result
-    private const float _raycastLimitSq = float.MaxValue;
+    private const bool  AllowReopen    = false; // this is extremely expensive and doesn't seem to actually improve the result
+    private const float RaycastLimitSq = float.MaxValue;
 
     public VoxelMap Volume { get; } = volume;
 
-    public Span<Node> NodeSpan => CollectionsMarshal.AsSpan(_nodes);
+    public Span<Node> NodeSpan =>
+        CollectionsMarshal.AsSpan(Nodes);
 
     public List<(ulong voxel, Vector3 p)> FindPath(
-        ulong fromVoxel,                ulong toVoxel, Vector3 fromPos, Vector3 toPos, bool useRaycast, bool returnIntermediatePoints, CancellationToken cancel)
+        ulong fromVoxel, ulong toVoxel, Vector3 fromPos, Vector3 toPos, bool useRaycast, bool returnIntermediatePoints, 
+        Action<float>? progressCallback, CancellationToken cancel)
     {
-        _useRaycast = useRaycast;
-
+        UseRaycast = useRaycast;
+        GenerateRandomThisTime();
         Start(fromVoxel, toVoxel, fromPos, toPos);
-        Execute(cancel);
-
-        var path = BuildPathToVisitedNode(_bestNodeIndex, returnIntermediatePoints);
-
-        // 随机性的后处理
-        if (path.Count > 2) 
-            ApplyVoxelPathRandomization(path);
-
-        return path;
+        Execute(cancel, progressCallback, CalculateDynamicMaxSteps(fromPos, toPos));
+        return BuildPathToVisitedNode(BestNodeIndex, returnIntermediatePoints);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Start(ulong fromVoxel, ulong toVoxel, Vector3 fromPos, Vector3 toPos)
     {
-        _nodes.Clear();
-        _nodeLookup.Clear();
-        _openList.Clear();
-        _bestNodeIndex = 0;
+        Nodes.Clear();
+        NodeLookup.Clear();
+        OpenList.Clear();
+        BestNodeIndex = 0;
         if (fromVoxel == VoxelMap.InvalidVoxel || toVoxel == VoxelMap.InvalidVoxel)
         {
-            Service.Log.Error($"无效的输入单元格: {fromVoxel:X} -> {toVoxel:X}");
+            Service.Log.Error($"Bad input cells: {fromVoxel:X} -> {toVoxel:X}");
             return;
         }
 
-        _goalVoxel = toVoxel;
-        _goalPos   = toPos;
+        GoalVoxel = toVoxel;
+        GoalPos   = toPos;
 
-        var randomFactor = GenerateRandomFactor();
-        _nodes.Add(new()
+        // 预分配容量以减少重新分配
+        if (Nodes.Capacity < DefaultInitialCapacity)
+            Nodes.Capacity = DefaultInitialCapacity;
+        if (NodeLookup.EnsureCapacity(DefaultInitialCapacity) < DefaultInitialCapacity)
+            NodeLookup.EnsureCapacity(DefaultInitialCapacity);
+        if (OpenList.Capacity < DefaultInitialCapacity)
+            OpenList.Capacity = DefaultInitialCapacity;
+
+        Nodes.Add(new()
         {
-            HScore        = HeuristicDistance(fromVoxel, fromPos),
-            Voxel         = fromVoxel,
-            ParentIndex   = 0,
-            OpenHeapIndex = -1,
-            Position      = fromPos,
-            RandomFactor  = randomFactor
-        });
-
-        _nodeLookup[fromVoxel] = 0;
+            HScore = HeuristicDistance(fromVoxel, fromPos), Voxel = fromVoxel, ParentIndex = 0, OpenHeapIndex = -1, Position = fromPos
+        }); // start's parent is self
+        NodeLookup[fromVoxel] = 0;
         AddToOpen(0);
     }
 
-    private float GenerateRandomFactor() => 
-        (((float)_random.NextDouble() * 2) - 1) * _randomFactor;
-
-    // 添加体素路径随机化后处理方法
-    private void ApplyVoxelPathRandomization(List<(ulong voxel, Vector3 p)> path)
-    {
-        // 体素寻路已经在A*过程中添加了一些随机性，这里添加额外的路径扰动
-        // 只处理中间点，保持起点和终点不变
-        for (var i = 1; i < path.Count - 1; i++)
-        {
-            // 计算在路径中的相对位置
-            var progressAlongPath = (float)i / (path.Count - 1);
-
-            // 在路径中间区域应用最大随机性，接近两端应用较小随机性
-            var positionFactor = MathF.Sin(progressAlongPath * MathF.PI);
-
-            // 计算随机因子，体素路径的随机化强度比网格路径小一些，以保持稳定性
-            var localRandomFactor = _randomFactor * 0.7f * positionFactor;
-
-            // 获取当前点位置
-            var currPos = path[i].p;
-
-            // 计算与相邻点的方向，确定合理的随机化方向
-            var prevPos = i > 0 ? path[i              - 1].p : currPos;
-            var nextPos = i < path.Count - 1 ? path[i + 1].p : currPos;
-
-            // 计算路径方向
-            var     dirToPrev = Vector3.Normalize(prevPos - currPos);
-            var     dirToNext = Vector3.Normalize(nextPos - currPos);
-            Vector3 pathDir;
-
-            if (Vector3.Dot(dirToPrev, dirToNext) < -0.8f)
-            {
-                // 如果是急转弯，使用单一方向
-                pathDir = -dirToPrev;
-            }
-            else
-            {
-                // 使用平均方向
-                pathDir = Vector3.Normalize(dirToPrev + dirToNext);
-            }
-
-            // 计算垂直于路径的方向向量
-            var perpH = new Vector3(-pathDir.Z, 0, pathDir.X);            // 水平面上垂直的向量
-            var perpV = Vector3.Normalize(Vector3.Cross(pathDir, perpH)); // 垂直方向
-
-            // 生成随机偏移量 - 增加随机性强度
-            var randomH = (((float)_random.NextDouble() * 2) - 1) * localRandomFactor * 1.5f;
-            var randomV = (((float)_random.NextDouble() * 2) - 1) * localRandomFactor * 0.4f; // 垂直方向随机性更小
-
-            // 降低阈值，确保更多点被随机化
-            if (Math.Abs(randomH) > 0.05f || Math.Abs(randomV) > 0.02f)
-            {
-                // 计算随机偏移向量
-                var offset = ((perpH * randomH) + (perpV * randomV)) * 2.5f;
-
-                // 应用随机偏移
-                var newPos = currPos + offset;
-
-                // 检查新位置是否有效
-                if (IsValidPosition(newPos))
-                    path[i] = (path[i].voxel, newPos);
-                else
-                {
-                    // 如果随机后的位置无效，尝试较小的偏移
-                    var smallerOffset = offset * 0.5f;
-                    var fallbackPos   = currPos + smallerOffset;
-
-                    if (IsValidPosition(fallbackPos))
-                        path[i] = (path[i].voxel, fallbackPos);
-                }
-            }
-        }
-
-        // 平滑路径，确保路径连贯
-        SmoothVoxelPath(path);
-    }
-
-    // 检查位置是否有效
-    private bool IsValidPosition(Vector3 pos) => 
-        VoxelSearch.FindNearestEmptyVoxel(Volume, pos, new Vector3(1.0f, 1.0f, 1.0f)) != VoxelMap.InvalidVoxel;
-
-    // 平滑体素路径
-    private void SmoothVoxelPath(List<(ulong voxel, Vector3 p)> path)
-    {
-        if (path.Count < 4) return;
-
-        // 保存原始点用于插值计算
-        var originalPoints = new List<Vector3>(path.Count);
-        foreach (var point in path) originalPoints.Add(point.p);
-
-        // 平滑中间点
-        for (var i = 1; i < path.Count - 1; i++)
-        {
-            // 与相邻点进行加权平均
-            var smoothed = (originalPoints[i]     * 0.7f)  +
-                           (originalPoints[i - 1] * 0.15f) +
-                           (originalPoints[i + 1] * 0.15f);
-
-            // 确保平滑后的位置有效
-            if (IsValidPosition(smoothed)) path[i] = (path[i].voxel, smoothed);
-        }
-    }
-
-    public void Execute(CancellationToken cancel, int maxSteps = 1000000)
+    public void Execute(CancellationToken cancel, Action<float>? progressCallback = null, int maxSteps = 1000000)
     {
         for (var i = 0; i < maxSteps; ++i)
         {
             if (!ExecuteStep())
                 return;
             if ((i & 0x3ff) == 0)
+            {
                 cancel.ThrowIfCancellationRequested();
+                progressCallback?.Invoke((float)i / maxSteps);
+            }
         }
     }
 
     // returns whether search is to be terminated; on success, first node of the open list would contain found goal
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool ExecuteStep()
     {
         var nodeSpan = NodeSpan;
-        if (_openList.Count == 0 || nodeSpan[_bestNodeIndex].HScore <= 0)
+        if (OpenList.Count == 0 || nodeSpan[BestNodeIndex].HScore <= 0)
             return false;
 
         var     curNodeIndex = PopMinOpen();
         ref var curNode      = ref nodeSpan[curNodeIndex];
 
+        // 早期终止检查：如果当前最佳节点足够接近目标，提前结束搜索
+        if (IsCloseEnoughToGoal(nodeSpan[BestNodeIndex].Position))
+            return false;
+
         var curVoxel = curNode.Voxel;
+        VisitNeighboursInAllDirections(curNodeIndex, curVoxel);
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void VisitNeighboursInAllDirections(int curNodeIndex, ulong curVoxel)
+    {
         foreach (var dest in EnumerateNeighbours(curVoxel, 0, -1, 0))
             VisitNeighbour(curNodeIndex, dest);
         foreach (var dest in EnumerateNeighbours(curVoxel, 0, +1, 0))
@@ -211,14 +120,12 @@ public class VoxelPathfind(VoxelMap volume)
             VisitNeighbour(curNodeIndex, dest);
         foreach (var dest in EnumerateNeighbours(curVoxel, 0, 0, +1))
             VisitNeighbour(curNodeIndex, dest);
-        
-        return true;
     }
 
     private List<(ulong voxel, Vector3 p)> BuildPathToVisitedNode(int nodeIndex, bool returnIntermediatePoints)
     {
         var res = new List<(ulong voxel, Vector3 p)>();
-        if (nodeIndex < _nodes.Count)
+        if (nodeIndex < Nodes.Count)
         {
             var     nodeSpan = NodeSpan;
             ref var lastNode = ref nodeSpan[nodeIndex];
@@ -269,6 +176,7 @@ public class VoxelPathfind(VoxelMap volume)
                 neighbourVoxel = VoxelMap.EncodeIndex(l1Index, neighbourVoxel);
                 neighbourVoxel = VoxelMap.EncodeIndex(l0Index, neighbourVoxel);
                 if (Volume.IsEmpty(neighbourVoxel)) yield return neighbourVoxel;
+                // else: L2 is occupied, so we can't go there
                 yield break;
             }
         }
@@ -384,29 +292,18 @@ public class VoxelPathfind(VoxelMap volume)
             yield return VoxelMap.EncodeSubIndex(voxel, ld.VoxelToIndex(x, y, z), level);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void VisitNeighbour(int parentIndex, ulong nodeVoxel)
     {
-        var nodeIndex = _nodeLookup.GetValueOrDefault(nodeVoxel, -1);
+        var nodeIndex = NodeLookup.GetValueOrDefault(nodeVoxel, -1);
         if (nodeIndex < 0)
         {
             // first time we're visiting this node, calculate heuristic
-            nodeIndex = _nodes.Count;
-
-            var randomFactor = GenerateRandomFactor();
-
-            _nodes.Add(new()
-            {
-                GScore        = float.MaxValue,
-                HScore        = float.MaxValue,
-                Voxel         = nodeVoxel,
-                ParentIndex   = parentIndex,
-                OpenHeapIndex = -1,
-                RandomFactor  = randomFactor
-            });
-
-            _nodeLookup[nodeVoxel] = nodeIndex;
+            nodeIndex = Nodes.Count;
+            Nodes.Add(new() { GScore = float.MaxValue, HScore = float.MaxValue, Voxel = nodeVoxel, ParentIndex = parentIndex, OpenHeapIndex = -1 });
+            NodeLookup[nodeVoxel] = nodeIndex;
         }
-        else if (!_allowReopen && _nodes[nodeIndex].OpenHeapIndex < 0)
+        else if (!AllowReopen && Nodes[nodeIndex].OpenHeapIndex < 0)
         {
             // in closed list already - TODO: is it possible to visit again with lower cost?..
             return;
@@ -414,7 +311,7 @@ public class VoxelPathfind(VoxelMap volume)
 
         var     nodeSpan   = NodeSpan;
         ref var parentNode = ref nodeSpan[parentIndex];
-        var     enterPos   = nodeVoxel == _goalVoxel ? _goalPos : VoxelSearch.FindClosestVoxelPoint(Volume, nodeVoxel, parentNode.Position);
+        var     enterPos   = nodeVoxel == GoalVoxel ? GoalPos : VoxelSearch.FindClosestVoxelPoint(Volume, nodeVoxel, parentNode.Position);
         var     nodeG      = CalculateGScore(ref parentNode, nodeVoxel, enterPos, ref parentIndex);
         ref var curNode    = ref nodeSpan[nodeIndex];
         if (nodeG + 0.00001f < curNode.GScore)
@@ -426,69 +323,83 @@ public class VoxelPathfind(VoxelMap volume)
             curNode.Position    = enterPos;
             AddToOpen(nodeIndex);
 
-            if (curNode.HScore < _nodes[_bestNodeIndex].HScore)
-                _bestNodeIndex = nodeIndex;
+            if (curNode.HScore < Nodes[BestNodeIndex].HScore)
+                BestNodeIndex = nodeIndex;
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float CalculateGScore(ref Node parent, ulong destVoxel, Vector3 destPos, ref int parentIndex)
     {
-        if (_useRaycast)
+        float   baseDistance;
+        float   parentBaseG;
+        Vector3 fromPos;
+
+        if (UseRaycast)
         {
             // check LoS from grandparent
             var     grandParentIndex = parent.ParentIndex;
             ref var grandParentNode  = ref NodeSpan[grandParentIndex];
-            // TODO: invert LoS check to match path reconstruction step?
-            var dist = (grandParentNode.Position - destPos).LengthSquared();
-            if (dist <= _raycastLimitSq && VoxelSearch.LineOfSight(Volume, grandParentNode.Voxel, destVoxel, grandParentNode.Position, destPos))
+            var     distanceSquared  = (grandParentNode.Position - destPos).LengthSquared();
+            if (distanceSquared <= RaycastLimitSq && VoxelSearch.LineOfSight(Volume, grandParentNode.Voxel, destVoxel, grandParentNode.Position, destPos))
             {
-                parentIndex = grandParentIndex;
-                return grandParentNode.GScore + MathF.Sqrt(dist);
+                parentIndex  = grandParentIndex;
+                baseDistance = MathF.Sqrt(distanceSquared);
+                parentBaseG  = grandParentNode.GScore;
+                fromPos      = grandParentNode.Position;
+            }
+            else
+            {
+                baseDistance = (parent.Position - destPos).Length();
+                parentBaseG  = parent.GScore;
+                fromPos      = parent.Position;
             }
         }
-
-        var distance = (parent.Position - destPos).Length();
-
-        ref var node            = ref NodeSpan[_nodeLookup[destVoxel]];
-        var     randomInfluence = 1.0f + node.RandomFactor;
-        distance *= randomInfluence;
-
-        return parent.GScore + distance;
-    }
-
-    private float HeuristicDistance(ulong nodeVoxel, Vector3 v)
-    {
-        if (nodeVoxel == _goalVoxel)
-            return 0;
-
-        var baseDistance = (v - _goalPos).Length() * 0.999f;
-
-        if (nodeVoxel != _goalVoxel)
+        else
         {
-            var nodeIndex = _nodeLookup.GetValueOrDefault(nodeVoxel, -1);
-            if (nodeIndex >= 0)
-            {
-                // 使用已存储的随机因子，但动态调整影响程度
-                // 距离目标越近，随机因子影响越小，确保能收敛到目标
-                var targetDist      = (v - _goalPos).Length();
-                var targetInfluence = Math.Min(1.0f, targetDist / 10.0f); // 距离目标 10 单位以内，随机因子影响逐渐减小
-
-                // 增加随机因子影响，提高随机性
-                var randomInfluence = 1.0f + (NodeSpan[nodeIndex].RandomFactor * 0.7f * targetInfluence);
-                return baseDistance * randomInfluence;
-            }
+            baseDistance = (parent.Position - destPos).Length();
+            parentBaseG  = parent.GScore;
+            fromPos      = parent.Position;
         }
 
-        return baseDistance;
+        var verticalDifference = MathF.Abs(fromPos.Y - destPos.Y);
+        var verticalPenalty    = 0.2f * verticalDifference;
+
+        return parentBaseG + baseDistance + RandomThisTime + verticalPenalty;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private float HeuristicDistance(ulong nodeVoxel, Vector3 v) =>
+        nodeVoxel != GoalVoxel ? (v - GoalPos).Length() * 0.999f : 0;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int CalculateDynamicMaxSteps(Vector3 fromPos, Vector3 toPos)
+    {
+        var distance = (fromPos - toPos).Length();
+        var config = Service.Config;
+        
+        var dynamicSteps = (int)(config.VoxelPathfindMinSteps + 
+                                (distance * config.VoxelPathfindMaxStepsMultiplier * config.VoxelPathfindMaxStepsBaseFactor));
+        
+        // 最多 100 万步
+        return Math.Min(Math.Max(dynamicSteps, config.VoxelPathfindMinSteps), 100_0000);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool IsCloseEnoughToGoal(Vector3 currentPos)
+    {
+        var distanceToGoal = (currentPos - GoalPos).Length();
+        return distanceToGoal <= Service.Config.VoxelPathfindEarlyTerminationDistance;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void AddToOpen(int nodeIndex)
     {
         ref var node = ref NodeSpan[nodeIndex];
         if (node.OpenHeapIndex < 0)
         {
-            node.OpenHeapIndex = _openList.Count;
-            _openList.Add(nodeIndex);
+            node.OpenHeapIndex = OpenList.Count;
+            OpenList.Add(nodeIndex);
         }
 
         // update location
@@ -496,90 +407,95 @@ public class VoxelPathfind(VoxelMap volume)
     }
 
     // remove first (minimal) node from open heap and mark as closed
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private int PopMinOpen()
     {
         var nodeSpan  = NodeSpan;
-        var nodeIndex = _openList[0];
-        _openList[0] = _openList[_openList.Count - 1];
-        _openList.RemoveAt(_openList.Count - 1);
+        var nodeIndex = OpenList[0];
+        OpenList[0] = OpenList[^1];
+        OpenList.RemoveAt(OpenList.Count - 1);
         nodeSpan[nodeIndex].OpenHeapIndex = -1;
-        if (_openList.Count > 0)
+        if (OpenList.Count > 0)
         {
-            nodeSpan[_openList[0]].OpenHeapIndex = 0;
+            nodeSpan[OpenList[0]].OpenHeapIndex = 0;
             PercolateDown(0);
         }
 
         return nodeIndex;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void PercolateUp(int heapIndex)
     {
         var nodeSpan  = NodeSpan;
-        var nodeIndex = _openList[heapIndex];
+        var nodeIndex = OpenList[heapIndex];
         var parent    = (heapIndex - 1) >> 1;
-        while (heapIndex > 0 && HeapLess(ref nodeSpan[nodeIndex], ref nodeSpan[_openList[parent]]))
+        while (heapIndex > 0 && HeapLess(ref nodeSpan[nodeIndex], ref nodeSpan[OpenList[parent]]))
         {
-            _openList[heapIndex]                         = _openList[parent];
-            nodeSpan[_openList[heapIndex]].OpenHeapIndex = heapIndex;
-            heapIndex                                    = parent;
-            parent                                       = (heapIndex - 1) >> 1;
+            OpenList[heapIndex]                         = OpenList[parent];
+            nodeSpan[OpenList[heapIndex]].OpenHeapIndex = heapIndex;
+            heapIndex                                   = parent;
+            parent                                      = (heapIndex - 1) >> 1;
         }
 
-        _openList[heapIndex]              = nodeIndex;
+        OpenList[heapIndex]               = nodeIndex;
         nodeSpan[nodeIndex].OpenHeapIndex = heapIndex;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void PercolateDown(int heapIndex)
     {
         var nodeSpan  = NodeSpan;
-        var nodeIndex = _openList[heapIndex];
-        var maxSize   = _openList.Count;
+        var nodeIndex = OpenList[heapIndex];
+        var maxSize   = OpenList.Count;
         while (true)
         {
             var child1 = (heapIndex << 1) + 1;
             if (child1 >= maxSize)
                 break;
             var child2 = child1 + 1;
-            if (child2 == maxSize || HeapLess(ref nodeSpan[_openList[child1]], ref nodeSpan[_openList[child2]]))
+            if (child2 == maxSize || HeapLess(ref nodeSpan[OpenList[child1]], ref nodeSpan[OpenList[child2]]))
             {
-                if (HeapLess(ref nodeSpan[_openList[child1]], ref nodeSpan[nodeIndex]))
+                if (HeapLess(ref nodeSpan[OpenList[child1]], ref nodeSpan[nodeIndex]))
                 {
-                    _openList[heapIndex]                         = _openList[child1];
-                    nodeSpan[_openList[heapIndex]].OpenHeapIndex = heapIndex;
-                    heapIndex                                    = child1;
+                    OpenList[heapIndex]                         = OpenList[child1];
+                    nodeSpan[OpenList[heapIndex]].OpenHeapIndex = heapIndex;
+                    heapIndex                                   = child1;
                 }
                 else
                     break;
             }
-            else if (HeapLess(ref nodeSpan[_openList[child2]], ref nodeSpan[nodeIndex]))
+            else if (HeapLess(ref nodeSpan[OpenList[child2]], ref nodeSpan[nodeIndex]))
             {
-                _openList[heapIndex]                         = _openList[child2];
-                nodeSpan[_openList[heapIndex]].OpenHeapIndex = heapIndex;
-                heapIndex                                    = child2;
+                OpenList[heapIndex]                         = OpenList[child2];
+                nodeSpan[OpenList[heapIndex]].OpenHeapIndex = heapIndex;
+                heapIndex                                   = child2;
             }
             else
                 break;
         }
 
-        _openList[heapIndex]              = nodeIndex;
+        OpenList[heapIndex]               = nodeIndex;
         nodeSpan[nodeIndex].OpenHeapIndex = heapIndex;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool HeapLess(ref Node nodeL, ref Node nodeR)
     {
         var fl = nodeL.GScore + nodeL.HScore;
         var fr = nodeR.GScore + nodeR.HScore;
 
-        fl *= 1.0f + (nodeL.RandomFactor * 0.3f);
-        fr *= 1.0f + (nodeR.RandomFactor * 0.3f);
-
         if (fl + 0.00001f < fr)
             return true;
         if (fr + 0.00001f < fl)
             return false;
+
         return nodeL.GScore > nodeR.GScore; // tie-break towards larger g-values
     }
-    
+
+    public static void GenerateRandomThisTime() =>
+        RandomThisTime = (float)new Random().NextDouble() * Service.Config.VoxelPathfindRandomFactor;
+
     public struct Node
     {
         public float   GScore;
@@ -588,6 +504,5 @@ public class VoxelPathfind(VoxelMap volume)
         public int     ParentIndex;   // index in the node list of the node we entered from
         public int     OpenHeapIndex; // -1 if in closed list, otherwise index in open list
         public Vector3 Position;
-        public float   RandomFactor;
     }
 }

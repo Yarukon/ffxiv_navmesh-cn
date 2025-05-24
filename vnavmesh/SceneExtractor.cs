@@ -4,6 +4,7 @@ using FFXIVClientStructs.FFXIV.Common.Component.BGCollision.Math;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using Navmesh.Utilities;
 
 namespace Navmesh;
 
