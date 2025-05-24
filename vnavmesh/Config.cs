@@ -117,6 +117,7 @@ public class Config
         if (ImGui.SliderFloat("距离步数乘数", ref VoxelPathfindMaxStepsMultiplier, 100.0f, 5000.0f, "%.0f"))
             NotifyModified();
 
+        ImGui.Text("地面路径随机");
         // Random Path Gen
         if (ImGui.Checkbox("对路径使用随机算法", ref UseRandomPathGen))
             NotifyModified();
