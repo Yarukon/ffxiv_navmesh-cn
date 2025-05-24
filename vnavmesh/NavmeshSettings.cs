@@ -1,4 +1,4 @@
-﻿using Dalamud.Interface.Components;
+using Dalamud.Interface.Components;
 using Dalamud.Interface.Utility.Raii;
 using DotRecast.Recast;
 using ImGuiNET;
@@ -37,7 +37,7 @@ public class NavmeshSettings
     // we assume that bounds are constant -1024 to 1024 along each axis (since that's the quantization range of position in some packets)
     // there is some code that relies on tiling being power-of-2
     // current values mean 128x128x128 L1 tiles -> 16x16x16 L2 tiles -> 2x2x2 voxels
-    public int[] NumTiles = [16, 8, 4];
+    public int[] NumTiles = [16, 8, 8];
 
 
     public void Draw()

@@ -1,4 +1,4 @@
-﻿using DotRecast.Detour;
+using DotRecast.Detour;
 using Navmesh.NavVolume;
 using System;
 using System.IO;

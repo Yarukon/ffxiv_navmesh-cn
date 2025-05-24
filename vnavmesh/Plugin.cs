@@ -1,10 +1,17 @@
 using Dalamud.Game.Command;
+using Dalamud.Interface.Utility;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.Graphics.Render;
+using ImGuiNET;
 using Navmesh.Movement;
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.IO;
 using System.Numerics;
+using System.Threading.Tasks;
 
 namespace Navmesh;
 
@@ -65,6 +72,9 @@ public sealed class Plugin : IDalamudPlugin
         Service.CommandManager.AddHandler("/vnavmesh", new CommandInfo(OnCommand) { HelpMessage = cmd.HelpMessage, ShowInHelp = false }); // legacy
 
         Service.Framework.Update += OnUpdate;
+
+        // Rebuild random table based on user settings
+        (NavmeshQuery._filter2 as RandomizedQueryFilter)!.RebuildRandomTable();
     }
 
     public void Dispose()
@@ -104,12 +114,172 @@ public sealed class Plugin : IDalamudPlugin
         _dtrProvider.Update();
     }
 
+    /*public static Vector3 StartPos = new();
+    public static Vector3 EndPos = new();
+    public static List<Vector3> OriginalPath = [];
+    public static List<Vector3> DensedPath = [];
+    public static List<Vector3> CenteredPath = [];
+    public List<List<Vector3>> Paths = [];
+    public static bool OriginalPath_Locked = false;
+    public static bool DensedPath_Locked = false;
+    public static bool CenteredPath_Locked = false;
+    public static bool Paths_Locked = false;*/
+
     private void Draw()
     {
         _wndMain.StartFrame();
         WindowSystem.Draw();
         _wndMain.EndFrame();
+
+        // RenderDebug()
     }
+
+    /*private void RenderDebug()
+    {
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(0, 0));
+        ImGui.SetNextWindowViewport(ImGui.GetMainViewport().ID);
+        ImGui.SetNextWindowPos(new Vector2(0, 0) + ImGui.GetMainViewport().Pos);
+
+        ImGui.Begin("NavMesh Canvas_2D", ImGuiWindowFlags.NoInputs | ImGuiWindowFlags.NoNav | ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoBackground);
+
+        ImGui.SetWindowSize(ImGui.GetIO().DisplaySize);
+
+        ImGui.GetWindowDrawList().AddText(new(15, 15), 0xffffffff, $"NavNode Visualizer");
+
+        // Canvas Area
+        var drawList = ImGui.GetWindowDrawList();
+
+        if (!Paths_Locked)
+        {
+            foreach (var path in Paths)
+            {
+                if (Paths_Locked)
+                    break;
+
+                for (int i = 0; i < path.Count - 1; i++)
+                {
+                    if (Paths_Locked)
+                        break;
+
+                    var start = path[i];
+                    var end = path[i + 1];
+
+                    if (Service.GameGui.WorldToScreen(start, out var start2D) && Service.GameGui.WorldToScreen(end, out var end2D))
+                    {
+                        drawList.AddCircleFilled(start2D, 5, 0xAAFBC117);
+                        drawList.AddLine(start2D, end2D, 0xAAFFFFFF, 2);
+                    }
+                }
+            }
+        }
+
+        if (!DensedPath_Locked)
+        {
+            for (int i = 0; i < DensedPath.Count - 1; i++)
+            {
+                if (DensedPath_Locked)
+                    break;
+
+                var start = DensedPath[i];
+                var end = DensedPath[i + 1];
+
+                if (Service.GameGui.WorldToScreen(start, out var start2D) && Service.GameGui.WorldToScreen(end, out var end2D))
+                {
+                    drawList.AddCircleFilled(start2D, 5, 0xAA00FF00);
+                    drawList.AddLine(start2D, end2D, 0xAA00FF00, 2);
+                }
+            }
+        }
+
+        if (!OriginalPath_Locked)
+        {
+            for (int i = 0; i < OriginalPath.Count - 1; i++)
+            {
+                if (OriginalPath_Locked)
+                    break;
+
+                var start = OriginalPath[i];
+                var end = OriginalPath[i + 1];
+
+                if (Service.GameGui.WorldToScreen(start, out var start2D) && Service.GameGui.WorldToScreen(end, out var end2D))
+                {
+                    drawList.AddCircleFilled(start2D, 5, 0xAA0000FF);
+                    drawList.AddLine(start2D, end2D, 0xAA0000FF, 2);
+                }
+            }
+        }
+
+        if (!CenteredPath_Locked)
+        {
+            for (int i = 0; i < CenteredPath.Count - 1; i++)
+            {
+                if (CenteredPath_Locked)
+                    break;
+
+                var start = CenteredPath[i];
+                var end = CenteredPath[i + 1];
+
+                if (Service.GameGui.WorldToScreen(start, out var start2D) && Service.GameGui.WorldToScreen(end, out var end2D))
+                {
+                    drawList.AddCircleFilled(start2D, 5, 0xAA00FFFF);
+                    drawList.AddLine(start2D, end2D, 0xAA00FFFF, 2);
+                }
+            }
+        }
+
+        ImGui.End();
+        ImGui.PopStyleVar();
+
+        if (ImGui.Begin("NavMesh debugger"))
+        {
+            var player = Service.ClientState.LocalPlayer;
+            ImGui.Text("From");
+            ImGui.SetNextItemWidth(100);
+            ImGui.InputFloat("X##FromX", ref StartPos.X);
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(100);
+            ImGui.InputFloat("Y##FromY", ref StartPos.Y);
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(100);
+            ImGui.InputFloat("Z##FromZ", ref StartPos.Z);
+
+            ImGui.Text("To");
+            ImGui.SetNextItemWidth(100);
+            ImGui.InputFloat("X##ToX", ref EndPos.X);
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(100);
+            ImGui.InputFloat("Y##ToY", ref EndPos.Y);
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(100);
+            ImGui.InputFloat("Z##ToZ", ref EndPos.Z);
+
+            if (ImGui.Button("set start to playerpos"))
+                StartPos = player?.Position ?? default;
+
+            if (ImGui.Button("目的地: 当前位置"))
+                EndPos = player?.Position ?? default;
+            ImGui.SameLine();
+            if (ImGui.Button("目的地: 选中目标位置"))
+                EndPos = player?.TargetObject?.Position ?? default;
+            if (ImGui.Button("call pathfind"))
+            {
+                Paths_Locked = true;
+                Task.Run(async () => Paths.Add(await _navmeshManager.QueryPath(StartPos, EndPos, false)));
+                Paths_Locked = false;
+            }
+
+            ImGui.Text($"path count: {Paths.Count}");
+
+            if (ImGui.Button("clear all"))
+            {
+                Paths_Locked = true;
+                Paths.Clear();
+                Paths_Locked = false;
+            }
+
+            ImGui.End();
+        }
+    }*/
 
     private void OnCommand(string command, string arguments)
     {

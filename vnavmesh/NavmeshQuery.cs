@@ -1,8 +1,10 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Threading;
+using DotRecast.Core;
+using DotRecast.Core.Numerics;
 using DotRecast.Detour;
 using Navmesh.NavVolume;
 
@@ -20,6 +22,10 @@ public class NavmeshQuery
     public           DtNavMeshQuery MeshQuery;
     public           VoxelPathfind? VolumeQuery;
     private readonly IDtQueryFilter _filter = new DtQueryDefaultFilter();
+    internal static readonly IDtQueryFilter _filter2 = new RandomizedQueryFilter();
+    internal readonly PathRandomizer _randomizer;
+
+    private readonly DirectPathGenerator _directPathGen;
 
     public  List<long> LastPath => _lastPath;
     private List<long> _lastPath = [];
@@ -29,6 +35,10 @@ public class NavmeshQuery
         MeshQuery = new(navmesh.Mesh);
         if (navmesh.Volume != null)
             VolumeQuery = new(navmesh.Volume);
+
+        _directPathGen = new(MeshQuery, agentRadius: 0.5f);
+
+        _randomizer = new(MeshQuery);
     }
 
     public List<Vector3> PathfindMesh(Vector3 from, Vector3 to, bool useRaycast, bool useStringPulling, CancellationToken cancel)
@@ -45,16 +55,13 @@ public class NavmeshQuery
         var timer = Timer.Create();
         _lastPath.Clear();
 
-        // 添加随机化因子到寻路选项中
         var options = 0;
         if (useRaycast)
             options |= DtFindPathOptions.DT_FINDPATH_ANY_ANGLE;
 
         var opt = new DtFindPathOption(options, useRaycast ? 5 : 0);
 
-        // TODO: DotRecast库没有直接支持随机化，可考虑修改权重或者在后处理中添加随机性
-        MeshQuery.FindPath(startRef, endRef, from.SystemToRecast(), to.SystemToRecast(), _filter, ref _lastPath, opt);
-
+        MeshQuery.FindPath(startRef, endRef, from.SystemToRecast(), to.SystemToRecast(), Service.Config.UseRandomPathGen ? _filter2 : _filter, ref _lastPath, opt);
         if (_lastPath.Count == 0)
         {
             Service.Log.Error($"从 {from} ({startRef:X}) 到 {to} ({endRef:X}) 的路径查找失败：无法在网格上找到路径");
@@ -67,15 +74,40 @@ public class NavmeshQuery
 
         if (useStringPulling)
         {
-            var straightPath = new List<DtStraightPath>();
-            var success      = MeshQuery.FindStraightPath(from.SystemToRecast(), endPos, _lastPath, ref straightPath, 1024, 0);
-            if (success.Failed())
-                Service.Log.Error($"从 {from} ({startRef:X}) 到 {to} ({endRef:X}) 的路径查找失败：无法找到直线路径 ({success.Value:X})");
+            if (Service.Config.UseRandomPathGen)
+            {
+                var pathList = _lastPath.Select(r => MeshQuery.GetAttachedNavMesh().GetPolyCenter(r)).ToList();                
+                
+                var straightPath = new List<DtStraightPath>();
+                var success = MeshQuery.FindStraightPath(from.SystemToRecast(), endPos, _lastPath, ref straightPath, 1024, DtStraightPathOptions.DT_STRAIGHTPATH_AREA_CROSSINGS);
+                if (success.Failed())
+                    Service.Log.Error($"从 {from} ({startRef:X}) 到 {to} ({endRef:X}) 的路径查找失败：无法找到直线路径 ({success.Value:X})");
 
-            var res = straightPath.Select(p => p.pos.RecastToSystem()).ToList();
-            res.Add(endPos.RecastToSystem());
+                /*Plugin.OriginalPath_Locked = true;
+                Plugin.OriginalPath = [.. straightPath.Select(p => p.pos.RecastToSystem())];
+                Plugin.OriginalPath_Locked = false;*/
 
-            return res;
+                _randomizer.SetPointGenerationParameters(Service.Config.RandomPath_MinPointsPerSeg, Service.Config.RandomPath_MaxPointsPerSeg);
+                _randomizer.SetRandomizationParameters(3f, Service.Config.RandomPath_MaxDeviationRatio, Service.Config.RandomPath_Randomness);
+                _randomizer.SetPathCenteringParameters(Service.Config.RandomPath_UsePathCentering, Service.Config.RandomPath_CenteringStrength, Service.Config.RandomPath_MaxCenteringDist, Service.Config.RandomPath_RandomOffsetRatio);
+                
+                var res = _randomizer.RandomizePath([.. straightPath.Select(p => p.pos.RecastToSystem())], _filter);
+                res.Add(endPos.RecastToSystem());
+
+                return res;
+            }
+            else
+            {
+                var straightPath = new List<DtStraightPath>();
+                var success = MeshQuery.FindStraightPath(from.SystemToRecast(), endPos, _lastPath, ref straightPath, 1024, DtStraightPathOptions.DT_STRAIGHTPATH_AREA_CROSSINGS);
+                if (success.Failed())
+                    Service.Log.Error($"从 {from} ({startRef:X}) 到 {to} ({endRef:X}) 的路径查找失败：无法找到直线路径 ({success.Value:X})");
+
+                var res = straightPath.Select(p => p.pos.RecastToSystem()).ToList();
+                res.Add(endPos.RecastToSystem());
+
+                return res;
+            }
         }
         else
         {
