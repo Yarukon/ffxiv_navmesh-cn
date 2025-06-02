@@ -27,13 +27,6 @@ public class NavmeshQuery
     public  List<long> LastPath => _lastPath;
     private List<long> _lastPath = [];
 
-    private const int MaxCacheSize = 50; // 最大缓存条目数
-    
-    // 缓存最近的路径查询结果
-    private readonly ConcurrentDictionary<(Vector3 from, Vector3 to), List<Vector3>> PathCache   = new();
-    private readonly LinkedList<(Vector3 from, Vector3 to)>                          _cacheKeys   = [];
-    private readonly object                                                          _cacheLock   = new();
-
     public NavmeshQuery(Navmesh navmesh)
     {
         MeshQuery = new(navmesh.Mesh);
@@ -104,14 +97,6 @@ public class NavmeshQuery
             return [];
         }
 
-        // 检查缓存
-        var cacheKey = (from, to);
-        if (PathCache.TryGetValue(cacheKey, out var cachedPath))
-        {
-            Service.Log.Debug($"[寻路] 使用缓存路径从 {from} 到 {to}");
-            return cachedPath;
-        }
-
         var startVoxel = FindNearestVolumeVoxel(from);
         var endVoxel   = FindNearestVolumeVoxel(to);
         Service.Log.Debug($"[寻路] 体素 {startVoxel:X} -> {endVoxel:X}");
@@ -126,9 +111,6 @@ public class NavmeshQuery
         {
             Service.Log.Debug($"[寻路] 从 {from} 到 {to} 间存在视线，直接返回直线路径");
             var directPath = new List<Vector3> { from, to };
-
-            // 缓存此路径
-            AddToCache(cacheKey, directPath);
 
             return directPath;
         }
@@ -156,29 +138,7 @@ public class NavmeshQuery
             res.Add(to);
         }
 
-        // 缓存路径结果
-        AddToCache(cacheKey, res);
-
         return res;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void AddToCache((Vector3 from, Vector3 to) key, List<Vector3> path)
-    {
-        lock (_cacheLock)
-        {
-            // 如果缓存已满，移除最旧的项
-            if (_cacheKeys.Count is >= MaxCacheSize and > 0)
-            {
-                var oldestKey = _cacheKeys.First!.Value;
-                _cacheKeys.RemoveFirst();
-                PathCache.TryRemove(oldestKey, out _);
-            }
-
-            // 添加新路径到缓存
-            PathCache[key] = path;
-            _cacheKeys.AddLast(key);
-        }
     }
 
     private List<Vector3> ApplyStringPulling(List<Vector3> pathPoints, Vector3 destination)
