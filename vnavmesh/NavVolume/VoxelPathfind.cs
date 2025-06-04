@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -365,12 +365,22 @@ public class VoxelPathfind(VoxelMap volume)
         var verticalDifference = MathF.Abs(fromPos.Y - destPos.Y);
         var verticalPenalty    = 0.2f * verticalDifference;
 
-        return parentBaseG + baseDistance + RandomThisTime + verticalPenalty;
+        return parentBaseG + baseDistance + verticalPenalty;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float HeuristicDistance(ulong nodeVoxel, Vector3 v) =>
-        nodeVoxel != GoalVoxel ? (v - GoalPos).Length() * 0.999f : 0;
+    private float HeuristicDistance(ulong nodeVoxel, Vector3 v)
+    {
+        if (nodeVoxel == GoalVoxel)
+            return 0;
+
+        // Apply random variation to heuristic while keeping it admissible
+        // RandomThisTime is between 0 and VoxelPathfindRandomFactor
+        // Multiply by small factor (0.99) to ensure heuristic remains admissible
+        var baseHeuristic = (v - GoalPos).Length();
+        var randomizedHeuristic = baseHeuristic * (0.99f - (RandomThisTime * 0.01f));
+        return randomizedHeuristic;
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int CalculateDynamicMaxSteps(Vector3 fromPos, Vector3 toPos)
@@ -493,8 +503,13 @@ public class VoxelPathfind(VoxelMap volume)
         return nodeL.GScore > nodeR.GScore; // tie-break towards larger g-values
     }
 
-    public static void GenerateRandomThisTime() =>
-        RandomThisTime = (float)new Random().NextDouble() * Service.Config.VoxelPathfindRandomFactor;
+    public static void GenerateRandomThisTime()
+    {
+        // Scale random factor to be a small value that influences path selection
+        // but doesn't significantly impact pathfinding accuracy
+        RandomThisTime = (float)new Random().NextDouble() *
+            Math.Min(0.5f, Service.Config.VoxelPathfindRandomFactor);
+    }
 
     public struct Node
     {
