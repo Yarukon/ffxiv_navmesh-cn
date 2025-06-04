@@ -18,7 +18,7 @@ public class VoxelPathfind(VoxelMap volume)
     private          Vector3                GoalPos;
     private          bool                   UseRaycast;
 
-    public static float RandomThisTime { get; set; }
+    public static float CurRandomFactor { get; set; }
     
     private const bool  AllowReopen    = false; // this is extremely expensive and doesn't seem to actually improve the result
     private const float RaycastLimitSq = float.MaxValue;
@@ -378,7 +378,7 @@ public class VoxelPathfind(VoxelMap volume)
         // RandomThisTime is between 0 and VoxelPathfindRandomFactor
         // Multiply by small factor (0.99) to ensure heuristic remains admissible
         var baseHeuristic = (v - GoalPos).Length();
-        var randomizedHeuristic = baseHeuristic * (0.99f - (RandomThisTime * 0.01f));
+        var randomizedHeuristic = baseHeuristic * (0.999f - (CurRandomFactor * 0.01f));
         return randomizedHeuristic;
     }
 
@@ -507,8 +507,8 @@ public class VoxelPathfind(VoxelMap volume)
     {
         // Scale random factor to be a small value that influences path selection
         // but doesn't significantly impact pathfinding accuracy
-        RandomThisTime = (float)new Random().NextDouble() *
-            Math.Min(0.5f, Service.Config.VoxelPathfindRandomFactor);
+        CurRandomFactor = Service.Config.VoxelPathfindRandomFactor > 0f ? (float)new Random().NextDouble() *
+            Math.Min(0.5f, Service.Config.VoxelPathfindRandomFactor) : 0;
     }
 
     public struct Node

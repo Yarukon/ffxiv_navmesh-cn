@@ -98,7 +98,7 @@ public class Config
         ImGui.Spacing();
 
         ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
-        if (ImGui.SliderFloat("路线随机性", ref VoxelPathfindRandomFactor, 0.5f, 1f, "%.1f"))
+        if (ImGui.SliderFloat("路线随机性", ref VoxelPathfindRandomFactor, 0f, 1f, "%.1f"))
             NotifyModified();
         
         ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
