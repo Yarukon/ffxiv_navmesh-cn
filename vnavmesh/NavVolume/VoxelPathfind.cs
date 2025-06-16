@@ -673,6 +673,15 @@ public class VoxelPathfind(VoxelMap volume)
         }
     }
 
+    // 惩罚乘数：一个足够大的值，让算法“害怕”选择陡峭的路径。
+    // 10.0f 意味着走一段陡峭路径的成本是其物理长度的10倍。
+    private const float SteepSlopePenalty = 10.0f;
+
+    // 陡峭角度阈值：超过这个角度的移动将被施加惩罚。
+    // 建议值在 60 到 80 度之间。
+    private const float MaxSlopeAngleDegrees = 70.0f;
+    private const float MaxSlopeAngleRadians = MaxSlopeAngleDegrees * (float)(Math.PI / 180.0);
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float CalculateGScore(ref Node parent, ulong destVoxel, Vector3 destPos, ref int parentIndex)
     {
@@ -707,10 +716,39 @@ public class VoxelPathfind(VoxelMap volume)
             fromPos      = parent.Position;
         }
 
-        var verticalDifference = MathF.Abs(fromPos.Y - destPos.Y);
-        var verticalPenalty    = 0.2f * verticalDifference;
+        // 1. 计算移动的水平和垂直分量
+        var moveVector = destPos - fromPos;
+        var horizontalDistance = new Vector2(moveVector.X, moveVector.Z).Length();
+        var verticalDistance = Math.Abs(moveVector.Y);
 
-        return parentBaseG + baseDistance + verticalPenalty;
+        // 2. 计算惩罚乘数
+        float slopePenaltyMultiplier = 1.0f; // 默认为1.0 (无惩罚)
+
+        // 检查是否为近乎垂直的移动
+        if (horizontalDistance < 0.01f) // 几乎没有水平移动
+        {
+            if (verticalDistance > 0.1f) // 但有明显的垂直移动
+            {
+                // 这是纯粹的垂直攀爬/下落，给予最大惩罚
+                slopePenaltyMultiplier = SteepSlopePenalty;
+            }
+        }
+        else
+        {
+            // 计算实际的移动坡度角度
+            float slopeAngle = MathF.Atan(verticalDistance / horizontalDistance);
+
+            // 如果坡度超过我们设定的阈值，则施加惩罚
+            if (slopeAngle > MaxSlopeAngleRadians)
+            {
+                slopePenaltyMultiplier = SteepSlopePenalty;
+            }
+        }
+
+        // 3. 将惩罚应用到基础移动成本上
+        float finalMoveCost = baseDistance * slopePenaltyMultiplier;
+
+        return parentBaseG + finalMoveCost;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
