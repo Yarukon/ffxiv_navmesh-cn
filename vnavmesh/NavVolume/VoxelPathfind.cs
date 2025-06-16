@@ -153,7 +153,7 @@ public class VoxelPathfind(VoxelMap volume)
         // ==================================================================
         // ---- 3. 循环处理路径的其余部分 (从 P2 开始) ----
         // ==================================================================
-        for (int i = 2; i < rawPath.Count; i++)
+        for (int i = 2; i < rawPath.Count - 1; i++)
         {
             var segmentStartPoint = previousAdjustedPoint;
             var segmentEndPointOriginal = rawPath[i].p;
@@ -184,6 +184,61 @@ public class VoxelPathfind(VoxelMap volume)
             var finalSegmentPoint = ProcessPoint(segmentEndPointOriginal, previousAdjustedPoint, segmentDirection, MaxAngleRadians, NumProbes, ProbeInterval, characterHalfExtents);
             adjustedPath.Add(finalSegmentPoint);
             previousAdjustedPoint = finalSegmentPoint;
+        }
+
+        // ==================================================================
+        // ---- 4. Final Destination Point Processing (Special Handling with Reverse Probing) ----
+        // ==================================================================
+        // 只有当路径长度大于等于2时，才有终点需要处理
+        if (rawPath.Count >= 2)
+        {
+            var lastOriginalPoint = rawPath[^1].p;
+            var lastAdjustedIntermediatePoint = previousAdjustedPoint; // 这是倒数第二个调整好的点
+
+            var segmentVector = lastOriginalPoint - lastAdjustedIntermediatePoint;
+            var segmentLength = segmentVector.Length();
+
+            if (segmentLength > 0.01f)
+            {
+                var segmentDirection = Vector3.Normalize(segmentVector);
+                // 我们从目标点(终点)开始，沿着路径段向后回溯探测
+                // 寻找第一个既满足坡度要求，又在物理上有效的点
+                const float probeStep = 1.0f; // 与InterpolationStep保持一致或自定义
+
+                for (float dist = segmentLength; dist >= 0; dist -= probeStep)
+                {
+                    // dist=segmentLength是终点本身, dist=0是上一个点本身
+                    var probePoint = lastAdjustedIntermediatePoint + (segmentDirection * dist);
+
+                    // a. 检查从上一个点到当前探测点的坡度是否允许
+                    var delta = probePoint - lastAdjustedIntermediatePoint;
+                    var horizontalDist = new Vector2(delta.X, delta.Z).Length();
+
+                    // 避免除以零，并确保有足够的水平距离来进行有意义的坡度检查
+                    if (horizontalDist < 0.1f && Math.Abs(delta.Y) > 0.1f)
+                    {
+                        // 几乎是垂直的墙，跳过这个探测点
+                        continue;
+                    }
+
+                    var maxVerticalChange = horizontalDist * MathF.Tan(MaxClimbAngRad);
+
+                    if (Math.Abs(delta.Y) <= maxVerticalChange)
+                    {
+                        // b. 坡度允许，再检查该点是否有足够的站立空间
+                        if (VoxelSearch.FindNearestEmptyVoxel(Volume, probePoint, characterHalfExtents) != VoxelMap.InvalidVoxel)
+                        {
+                            // c. 找到了一个完全有效的点！进行最终的垂直调整并添加它
+                            var finalAdjustedPoint = AdjustSinglePoint(probePoint, NumProbes, ProbeInterval, characterHalfExtents);
+                            adjustedPath.Add(finalAdjustedPoint);
+                            break; // 找到后立即退出循环
+                        }
+                    }
+
+                    // 如果dist已经非常小，再继续探测没有意义
+                    if (dist < probeStep) break;
+                }
+            }
         }
 
         return adjustedPath;
