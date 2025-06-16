@@ -85,6 +85,8 @@ public sealed class Plugin : IDalamudPlugin
 
         // Rebuild random table based on user settings
         (NavmeshQuery._filter2 as RandomizedQueryFilter)!.RebuildRandomTable();
+
+        // Service.PluginInterface.UiBuilder.DisableUserUiHide = true; // Disable user UI hide to ensure our windows are always visible
     }
 
     public void Dispose()
@@ -141,7 +143,7 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.Draw();
         MainWindow.EndFrame();
 
-        // RenderDebug()
+        // RenderDebug();
     }
 
     /*private void RenderDebug()
@@ -271,10 +273,23 @@ public sealed class Plugin : IDalamudPlugin
             ImGui.SameLine();
             if (ImGui.Button("目的地: 选中目标位置"))
                 EndPos = player?.TargetObject?.Position ?? default;
+
+            if (ImGui.Button("目的地: 标点位置"))
+                EndPos = MapUtils.FlagToPoint(NavmeshManager.Query!) ?? default;
+
             if (ImGui.Button("call pathfind"))
             {
                 Paths_Locked = true;
-                Task.Run(async () => Paths.Add(await _navmeshManager.QueryPath(StartPos, EndPos, false)));
+                Task.Run(async () => Paths.Add(await NavmeshManager.QueryPath(StartPos, EndPos, false)));
+                Paths_Locked = false;
+            }
+
+            ImGui.SameLine();
+
+            if (ImGui.Button("call voxel pathfind"))
+            {
+                Paths_Locked = true;
+                Task.Run(async () => Paths.Add(await NavmeshManager.QueryPath(StartPos, EndPos, true)));
                 Paths_Locked = false;
             }
 

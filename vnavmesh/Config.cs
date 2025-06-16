@@ -45,6 +45,8 @@ public class Config
     public int   VoxelPathfindMinSteps = 5000;                  // 最小步数保证
     public float VoxelPathfindMaxStepsMultiplier = 1000.0f;     // 距离步数乘数
 
+    public bool VoxelPathfindPostProcess = true; // 是否启用体素路径后处理
+
     public event Action? Modified;
 
     public void NotifyModified() => Modified?.Invoke();
@@ -115,6 +117,9 @@ public class Config
             
         ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
         if (ImGui.SliderFloat("距离步数乘数", ref VoxelPathfindMaxStepsMultiplier, 100.0f, 5000.0f, "%.0f"))
+            NotifyModified();
+
+        if (ImGui.Checkbox("体素路径后处理", ref VoxelPathfindPostProcess))
             NotifyModified();
 
         ImGui.Text("地面路径随机");

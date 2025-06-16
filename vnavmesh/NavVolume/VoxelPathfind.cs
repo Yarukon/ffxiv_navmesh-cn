@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -28,6 +29,8 @@ public class VoxelPathfind(VoxelMap volume)
     public Span<Node> NodeSpan =>
         CollectionsMarshal.AsSpan(Nodes);
 
+    private readonly Vector3 CharaHalfExtents = new(0.5f, 2f, 0.5f);
+
     public List<(ulong voxel, Vector3 p)> FindPath(
         ulong fromVoxel, ulong toVoxel, Vector3 fromPos, Vector3 toPos, bool useRaycast, bool returnIntermediatePoints, 
         Action<float>? progressCallback, CancellationToken cancel)
@@ -36,7 +39,294 @@ public class VoxelPathfind(VoxelMap volume)
         GenerateRandomThisTime();
         Start(fromVoxel, toVoxel, fromPos, toPos);
         Execute(cancel, progressCallback, CalculateDynamicMaxSteps(fromPos, toPos));
-        return BuildPathToVisitedNode(BestNodeIndex, returnIntermediatePoints);
+
+        // --- 修改开始 ---
+        // 1. 先构建原始路径
+        var rawPath = BuildPathToVisitedNode(BestNodeIndex, returnIntermediatePoints);
+
+        if (Service.Config.VoxelPathfindPostProcess)
+        {
+            // 2. 对原始路径进行后处理以调整垂直净空
+            var adjustedPathPoints = AdjustPathForClearance(rawPath, CharaHalfExtents);
+
+            // 3. 将调整后的坐标点包装成期望的返回类型
+            // voxel 信息被丢弃，因为点的位置已经改变，原始voxel不再精确
+            var finalPath = adjustedPathPoints.Select(p => (voxel: (ulong)0, p)).ToList();
+
+            return finalPath;
+        }
+        // --- 修改结束 ---
+        return rawPath;
+    }
+
+    public List<Vector3> AdjustPathForClearance(List<(ulong voxel, Vector3 p)> rawPath, Vector3 characterHalfExtents)
+    {
+        if (rawPath.Count < 2)
+            return [.. rawPath.Select(node => node.p)];
+
+        var adjustedPath = new List<Vector3>();
+
+        // 定义后处理参数
+        const int NumProbes = 5;
+        const float ProbeInterval = 0.75f;
+        const float MaxAngleDegrees = 56.0f;
+        const float MaxAngleRadians = MaxAngleDegrees * (float)(Math.PI / 180.0);
+
+        // 用于从起点到第一个点的最大爬坡角度
+        const float MaxClimbAngDeg = 25.0f; // 最大爬坡角度
+        const float MaxClimbAngRad = MaxClimbAngDeg * (float)(Math.PI / 180.0);
+
+        const float InterpolationStep = 1.0f;
+
+        // ==================================================================
+        // ---- 1. 起点处理：P0 固定不变 ----
+        // ==================================================================
+        var p0_final = rawPath[0].p;
+        adjustedPath.Add(p0_final);
+        var previousAdjustedPoint = p0_final;
+
+        // ==================================================================
+        // ---- 2. 特殊处理第一个路径点 P1 (索引为 1) ----
+        // ==================================================================
+        var p1_orig = rawPath[1].p;
+        Vector3 p1_final;
+        bool p1_resolved = false;
+
+        // 只有在存在 P2 时，才能执行前瞻性修正
+        if (rawPath.Count > 2)
+        {
+            var p2_orig = rawPath[2].p;
+            var segment_1_2 = p2_orig - p1_orig;
+            var segmentLength = segment_1_2.Length();
+
+            if (segmentLength > 0.1f) // 避免除零
+            {
+                var direction = segment_1_2 / segmentLength;
+                const int lookAheadSteps = 10; // 最多探测10步
+                const float lookAheadInterval = 1.0f; // 每步的距离
+
+                // 从 p1_orig 开始，沿着 p1->p2 方向探测
+                for (int i = 0; i <= lookAheadSteps; i++)
+                {
+                    float dist = i * lookAheadInterval;
+                    if (dist > segmentLength) break; // 不超出 p2
+
+                    var probePoint = p1_orig + (direction * dist);
+
+                    // 检查从 P0 到探测点的坡度
+                    var delta = probePoint - p0_final;
+                    var horizontalDist = new Vector2(delta.X, delta.Z).Length();
+
+                    if (horizontalDist < 0.1f) continue;
+
+                    var maxVerticalChange = horizontalDist * MathF.Tan(MaxClimbAngRad);
+
+                    // 如果坡度在允许范围内
+                    if (Math.Abs(delta.Y) <= maxVerticalChange)
+                    {
+                        // 直接检查探测点本身是否是一个有效的、有足够净空间的位置。
+                        // 这是最可靠的检查方法。
+                        if (VoxelSearch.FindNearestEmptyVoxel(Volume, probePoint, characterHalfExtents) != VoxelMap.InvalidVoxel)
+                        {
+                            // 找到了一个坡度和净空都合格的候选点！
+                            // 使用 AdjustSinglePoint 进行最终微调，找到最佳垂直位置
+                            p1_final = AdjustSinglePoint(probePoint, NumProbes, ProbeInterval, characterHalfExtents);
+                            adjustedPath.Add(p1_final);
+                            previousAdjustedPoint = p1_final;
+                            p1_resolved = true;
+                            break; // 成功找到，跳出循环
+                        }
+                    }
+                }
+            }
+        }
+
+        // 如果前瞻性修正失败（或无法进行），则使用标准的回退方案
+        if (!p1_resolved)
+        {
+            var p1_forwardDir = Vector3.Normalize(p1_orig - p0_final);
+            p1_final = ProcessPoint(p1_orig, p0_final, p1_forwardDir, MaxAngleRadians, NumProbes, ProbeInterval, characterHalfExtents);
+            adjustedPath.Add(p1_final);
+            previousAdjustedPoint = p1_final;
+        }
+
+        // ==================================================================
+        // ---- 3. 循环处理路径的其余部分 (从 P2 开始) ----
+        // ==================================================================
+        for (int i = 2; i < rawPath.Count; i++)
+        {
+            var segmentStartPoint = previousAdjustedPoint;
+            var segmentEndPointOriginal = rawPath[i].p;
+            var segmentVector = segmentEndPointOriginal - segmentStartPoint;
+            var segmentLength = segmentVector.Length();
+
+            if (segmentLength < 0.01f) continue;
+
+            var segmentDirection = Vector3.Normalize(segmentVector); // 这是当前段的前进方向
+
+            if (segmentLength < InterpolationStep)
+            {
+                var finalAdjustedPoint = ProcessPoint(segmentEndPointOriginal, segmentStartPoint, segmentDirection, MaxAngleRadians, NumProbes, ProbeInterval, characterHalfExtents);
+                adjustedPath.Add(finalAdjustedPoint);
+                previousAdjustedPoint = finalAdjustedPoint;
+                continue;
+            }
+
+            for (float distance = InterpolationStep; distance < segmentLength; distance += InterpolationStep)
+            {
+                var currentOriginalPoint = segmentStartPoint + segmentDirection * distance;
+                var adjustedIntermediatePoint = ProcessPoint(currentOriginalPoint, previousAdjustedPoint, segmentDirection, MaxAngleRadians, NumProbes, ProbeInterval, characterHalfExtents);
+                adjustedPath.Add(adjustedIntermediatePoint);
+                previousAdjustedPoint = adjustedIntermediatePoint;
+            }
+
+            // *** MODIFIED CALL ***
+            var finalSegmentPoint = ProcessPoint(segmentEndPointOriginal, previousAdjustedPoint, segmentDirection, MaxAngleRadians, NumProbes, ProbeInterval, characterHalfExtents);
+            adjustedPath.Add(finalSegmentPoint);
+            previousAdjustedPoint = finalSegmentPoint;
+        }
+
+        return adjustedPath;
+    }
+
+    /// <summary>
+    /// 处理单个路径点：进行垂直调整、角度限制和最终安全检查。
+    /// </summary>
+    private Vector3 ProcessPoint(Vector3 currentPoint, Vector3 previousPoint, Vector3 forwardDirection, float maxAngleRadians, int numProbes, float probeInterval, Vector3 characterHalfExtents)
+    {
+        // 1. 坡度限制 (与之前相同)
+        var delta = currentPoint - previousPoint;
+        var horizontalDist = new Vector2(delta.X, delta.Z).Length();
+        if (horizontalDist > 0.01f)
+        {
+            var maxVerticalChange = horizontalDist * MathF.Tan(maxAngleRadians);
+            if (Math.Abs(delta.Y) > maxVerticalChange)
+            {
+                delta.Y = maxVerticalChange * Math.Sign(delta.Y);
+                currentPoint = previousPoint + delta;
+            }
+        }
+
+        // 2. *** 新增：水平居中调整 ***
+        // 在进行最终垂直定位前，先找到水平方向上的最佳位置
+        // 使用角色宽度的一半作为探测距离是一个合理的选择
+        float horizontalProbeDist = characterHalfExtents.X;
+        var horizontallyAdjustedPoint = FindHorizontalCenter(currentPoint, forwardDirection, horizontalProbeDist, characterHalfExtents);
+
+        // 3. 最终垂直位置微调 (使用水平调整后的点)
+        return AdjustSinglePoint(horizontallyAdjustedPoint, numProbes, probeInterval, characterHalfExtents);
+    }
+
+    /// <summary>
+    /// 对单个点进行垂直净空检查和调整，返回一个理想的垂直位置。
+    /// </summary>
+    private Vector3 AdjustSinglePoint(Vector3 point, int numProbes, float probeInterval, Vector3 characterHalfExtents)
+    {
+        var (upClearance, downClearance) = CheckVerticalClearance(point, numProbes, probeInterval, characterHalfExtents);
+
+        float offsetY = 0;
+        int totalAvailableProbes = upClearance + downClearance;
+
+        if (upClearance < numProbes && downClearance < numProbes)
+        {
+            float totalHeight = totalAvailableProbes * probeInterval;
+            float targetYFromBottom = totalHeight * 0.4f;
+            float currentYFromBottom = downClearance * probeInterval;
+            offsetY = targetYFromBottom - currentYFromBottom;
+        }
+        else if (upClearance < numProbes)
+        {
+            offsetY = -(numProbes - upClearance) * probeInterval;
+        }
+        else if (downClearance < numProbes)
+        {
+            offsetY = (numProbes - downClearance) * probeInterval;
+        }
+
+        return new Vector3(point.X, point.Y + offsetY, point.Z);
+    }
+
+    /// <summary>
+    /// 使用探针和 FindNearestEmptyVoxel 检查给定位置的垂直净空。
+    /// </summary>
+    private (int upwardClearance, int downwardClearance) CheckVerticalClearance(Vector3 position, int numProbes, float probeInterval, Vector3 characterHalfExtents)
+    {
+        int upClear = 0;
+        int downClear = 0;
+
+        // 向上检查
+        for (int i = 1; i <= numProbes; i++)
+        {
+            var probePos = position + new Vector3(0, i * probeInterval, 0);
+            // 检查返回的ID是否有效
+            if (VoxelSearch.FindNearestEmptyVoxel(Volume, probePos, characterHalfExtents) == VoxelMap.InvalidVoxel)
+                break;
+            upClear++;
+        }
+
+        // 向下检查
+        for (int i = 1; i <= numProbes; i++)
+        {
+            var probePos = position - new Vector3(0, i * probeInterval, 0);
+            if (VoxelSearch.FindNearestEmptyVoxel(Volume, probePos, characterHalfExtents) == VoxelMap.InvalidVoxel)
+                break;
+            downClear++;
+        }
+
+        return (upClear, downClear);
+    }
+
+    /// <summary>
+    /// 探测一个点的左右空间，并尝试将其移动到水平空间的中心。
+    /// "左右"是相对于前进方向而言的。
+    /// </summary>
+    /// <param name="centerPoint">要检查和调整的候选点。</param>
+    /// <param name="forwardDirection">角色当前的前进方向，用于确定左右。</param>
+    /// <param name="probeDistance">向左右探测的距离。一个好的默认值是 characterHalfExtents.X。</param>
+    /// <param name="characterHalfExtents">角色的半尺寸。</param>
+    /// <returns>经过水平调整后的新位置。</returns>
+    private Vector3 FindHorizontalCenter(Vector3 centerPoint, Vector3 forwardDirection, float probeDistance, Vector3 characterHalfExtents)
+    {
+        // 如果前进方向很小，无法判断左右，则直接返回原点
+        if (forwardDirection.LengthSquared() < 0.01f)
+        {
+            return centerPoint;
+        }
+
+        // 1. 计算相对右方向的向量 (Y-up 坐标系)
+        // 通过前进方向和世界向上方向(Y轴)的叉积得到
+        var right = Vector3.Normalize(Vector3.Cross(forwardDirection, Vector3.UnitY));
+
+        // 2. 定义左右探测点
+        var probeLeft = centerPoint - right * probeDistance;
+        var probeRight = centerPoint + right * probeDistance;
+
+        // 3. 检查三个点的有效性
+        // 注意：我们只检查水平调整，不改变Y坐标
+        bool isCenterValid = VoxelSearch.FindNearestEmptyVoxel(Volume, centerPoint, characterHalfExtents) != VoxelMap.InvalidVoxel;
+        bool isLeftValid = VoxelSearch.FindNearestEmptyVoxel(Volume, probeLeft, characterHalfExtents) != VoxelMap.InvalidVoxel;
+        bool isRightValid = VoxelSearch.FindNearestEmptyVoxel(Volume, probeRight, characterHalfExtents) != VoxelMap.InvalidVoxel;
+
+        // 如果中心点本身就无效，我们无能为力，返回原点让上层逻辑处理
+        if (!isCenterValid)
+        {
+            return centerPoint;
+        }
+
+        // 4. 根据探测结果进行调整
+        if (isLeftValid && !isRightValid)
+        {
+            // 右边是墙，左边是空地 -> 向左移动一点以远离墙壁
+            return centerPoint - right * (probeDistance / 2.0f);
+        }
+        else if (!isLeftValid && isRightValid)
+        {
+            // 左边是墙，右边是空地 -> 向右移动一点以远离墙壁
+            return centerPoint + right * (probeDistance / 2.0f);
+        }
+
+        // 如果两边都有效（开阔地）或两边都无效（狭窄通道），则保持在中间是最佳选择
+        return centerPoint;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -507,8 +797,7 @@ public class VoxelPathfind(VoxelMap volume)
     {
         // Scale random factor to be a small value that influences path selection
         // but doesn't significantly impact pathfinding accuracy
-        CurRandomFactor = Service.Config.VoxelPathfindRandomFactor > 0f ? (float)new Random().NextDouble() *
-            Math.Min(0.5f, Service.Config.VoxelPathfindRandomFactor) : 0;
+        CurRandomFactor = Service.Config.VoxelPathfindRandomFactor > 0f ? (float)new Random().NextDouble() * Service.Config.VoxelPathfindRandomFactor : 0;
     }
 
     public struct Node

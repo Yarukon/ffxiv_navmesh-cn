@@ -172,10 +172,10 @@ public class NavmeshQuery
 
         // 支持弦拉优化
         if (useStringPulling && voxelPath.Count > 2)
-            res = ApplyStringPulling(voxelPath.Select(r => r.p).ToList(), to);
+            res = ApplyStringPulling([.. voxelPath.Select(r => r.p)], to);
         else
         {
-            res = voxelPath.Select(r => r.p).ToList();
+            res = [.. voxelPath.Select(r => r.p)];
             res.Add(to);
         }
 

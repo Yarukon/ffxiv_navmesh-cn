@@ -1,4 +1,4 @@
-﻿using Dalamud.Game;
+using Dalamud.Game;
 using Dalamud.Game.ClientState.Objects;
 using Dalamud.IoC;
 using Dalamud.Plugin;
@@ -21,7 +21,8 @@ public class Service
     [PluginService] public static IDtrBar                 DtrBar          { get; private set; } = null!;
     [PluginService] public static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] public static IGameConfig             GameConfig      { get; private set; } = null!;
-    
+    [PluginService] public static IGameGui                GameGui         { get; private set; } = null!;
+
     public static Config Config { get; } = new();
     
     public static Lumina.Excel.ExcelSheet<T> LuminaSheet<T>() where T : struct, Lumina.Excel.IExcelRow<T> => 

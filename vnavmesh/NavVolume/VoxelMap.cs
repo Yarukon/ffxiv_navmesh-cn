@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 
@@ -228,6 +228,12 @@ public class VoxelMap
     {
         var result = FindLeafVoxel(p);
         return result.empty ? result.voxel : InvalidVoxel;
+    }
+
+    public Vector3 GetVoxelCenter(ulong voxelId, float eps = 0f)
+    {
+        var bounds = VoxelBounds(voxelId, 0.0f);
+        return (bounds.min + bounds.max) * 0.5f;
     }
 
     public (Vector3 min, Vector3 max) VoxelBounds(ulong voxel, float eps)
