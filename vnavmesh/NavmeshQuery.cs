@@ -168,54 +168,10 @@ public class NavmeshQuery
 
         Service.Log.Debug($"寻路耗时 {timer.Value().TotalSeconds:f3}秒: {string.Join(", ", voxelPath.Select(r => $"{r.p} {r.voxel:X}"))}");
 
-        List<Vector3> res;
-
-        // 支持弦拉优化
-        if (useStringPulling && voxelPath.Count > 2)
-            res = ApplyStringPulling([.. voxelPath.Select(r => r.p)], to);
-        else
-        {
-            res = [.. voxelPath.Select(r => r.p)];
-            res.Add(to);
-        }
+        List<Vector3> res = [.. voxelPath.Select(r => r.p)];
+        res.Add(to);
 
         return res;
-    }
-
-    private List<Vector3> ApplyStringPulling(List<Vector3> pathPoints, Vector3 destination)
-    {
-        if (pathPoints.Count <= 2)
-            return pathPoints;
-
-        var result       = new List<Vector3> { pathPoints[0] };
-        var currentPoint = 0;
-
-        while (currentPoint < pathPoints.Count - 1)
-        {
-            var farthestVisible = currentPoint + 1;
-
-            // 查找最远的可见点
-            for (var i = farthestVisible + 1; i < pathPoints.Count; i++)
-            {
-                var fromVoxel = FindNearestVolumeVoxel(pathPoints[currentPoint]);
-                var toVoxel   = FindNearestVolumeVoxel(pathPoints[i]);
-
-                if (VoxelSearch.LineOfSight(VolumeQuery!.Volume, fromVoxel, toVoxel,
-                                            pathPoints[currentPoint], pathPoints[i]))
-                    farthestVisible = i;
-                else
-                    break;
-            }
-
-            // 添加最远的可见点
-            result.Add(pathPoints[farthestVisible]);
-            currentPoint = farthestVisible;
-        }
-
-        // 确保终点在路径中
-        if ((result[^1] - destination).LengthSquared() > 0.01f) result.Add(destination);
-
-        return result;
     }
 
     // returns 0 if not found, otherwise polygon ref

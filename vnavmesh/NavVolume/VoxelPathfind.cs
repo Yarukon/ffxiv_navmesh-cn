@@ -128,7 +128,7 @@ public class VoxelPathfind(VoxelMap volume)
                         {
                             // 找到了一个坡度和净空都合格的候选点！
                             // 使用 AdjustSinglePoint 进行最终微调，找到最佳垂直位置
-                            p1_final = AdjustSinglePoint(probePoint, NumProbes, ProbeInterval, characterHalfExtents);
+                            p1_final = AdjustSinglePoint(probePoint, p0_final, NumProbes, ProbeInterval, characterHalfExtents);
                             adjustedPath.Add(p1_final);
                             previousAdjustedPoint = p1_final;
                             p1_resolved = true;
@@ -233,7 +233,7 @@ public class VoxelPathfind(VoxelMap volume)
                         if (VoxelSearch.FindNearestEmptyVoxel(Volume, probePoint, characterHalfExtents) != VoxelMap.InvalidVoxel)
                         {
                             // c. 找到了一个完全有效的点！进行最终的垂直调整并添加它
-                            var finalAdjustedPoint = AdjustSinglePoint(probePoint, NumProbes, ProbeInterval, characterHalfExtents);
+                            var finalAdjustedPoint = AdjustSinglePoint(probePoint, lastAdjustedIntermediatePoint, NumProbes, ProbeInterval, characterHalfExtents);
                             adjustedPath.Add(finalAdjustedPoint);
                             break; // 找到后立即退出循环
                         }
@@ -273,30 +273,73 @@ public class VoxelPathfind(VoxelMap volume)
     /// <summary>
     /// 对单个点进行垂直净空检查和调整，返回一个理想的垂直位置。
     /// </summary>
-    private Vector3 AdjustSinglePoint(Vector3 point, int numProbes, float probeInterval, Vector3 characterHalfExtents)
+    private Vector3 AdjustSinglePoint(Vector3 point, Vector3 previousPoint, int numProbes, float probeInterval, Vector3 characterHalfExtents)
     {
+        Service.Log.Debug($"[AdjustSinglePoint] START for point {point:F2} (PrevY: {previousPoint.Y:F2}). Probing +/- {numProbes * probeInterval:F1}m...");
+
         var (upClearance, downClearance) = CheckVerticalClearance(point, numProbes, probeInterval, characterHalfExtents);
+        Service.Log.Debug($"  -> Clearance Check: Up Probes = {upClearance}, Down Probes = {downClearance}");
 
         float offsetY = 0;
-        int totalAvailableProbes = upClearance + downClearance;
+        string decision = "None";
 
+        // 计算路径的垂直意图
+        float intendedVerticalChange = point.Y - previousPoint.Y;
+
+        // Case 1: 上下空间都受限 (狭窄通道)
         if (upClearance < numProbes && downClearance < numProbes)
         {
+            // 这部分逻辑不变，在狭窄空间里找中心是正确的
+            int totalAvailableProbes = upClearance + downClearance;
             float totalHeight = totalAvailableProbes * probeInterval;
             float targetYFromBottom = totalHeight * 0.4f;
             float currentYFromBottom = downClearance * probeInterval;
             offsetY = targetYFromBottom - currentYFromBottom;
+            decision = $"CRAMPED SPACE. Total height {totalHeight:F2}m. Adjusting to center.";
         }
+        // Case 2: 仅上方空间受限 (接近天花板)
         else if (upClearance < numProbes)
         {
-            offsetY = -(numProbes - upClearance) * probeInterval;
+            // 【核心判断】根据路径意图决定是“钻过去”还是“飞越”
+            // 使用一个小的阈值避免浮点数误差
+            if (intendedVerticalChange < -0.1f)
+            {
+                // 意图是下降：执行“钻过去”逻辑 -> 向下移动
+                offsetY = -(numProbes - upClearance) * probeInterval;
+                decision = $"CEILING NEAR (Path Descending). Ducking UNDER. Pushing DOWN by {Math.Abs(offsetY):F2}m.";
+            }
+            else
+            {
+                // 意图是水平或上升：执行“飞越”逻辑 -> 向上移动以避免撞头
+                // 向上推，直到角色顶部和天花板之间有一个小的安全距离
+                float requiredClearance = characterHalfExtents.Y;
+                float availableUpSpace = upClearance * probeInterval;
+                offsetY = availableUpSpace - requiredClearance - 0.1f; // 0.1f 是安全缓冲
+                                                                       // 确保我们不会因为过度补偿而向上推得太多
+                offsetY = Math.Max(0, offsetY);
+                decision = $"CEILING NEAR (Path Level/Ascending). Clearing OVER. Pushing UP by {offsetY:F2}m.";
+            }
         }
+        // Case 3: 仅下方空间受限 (接近地面)
         else if (downClearance < numProbes)
         {
+            // 这个逻辑总是正确的：远离地面/下方障碍物 -> 向上移动
             offsetY = (numProbes - downClearance) * probeInterval;
+            decision = $"FLOOR NEAR. Pushing UP by {offsetY:F2}m.";
+        }
+        // Case 4: 上下空间都开阔
+        else
+        {
+            decision = "OPEN SPACE. No vertical adjustment needed.";
+            offsetY = 0;
         }
 
-        return new Vector3(point.X, point.Y + offsetY, point.Z);
+        var finalPoint = new Vector3(point.X, point.Y + offsetY, point.Z);
+        Service.Log.Debug($"  -> Decision: {decision}");
+        Service.Log.Debug($"  -> Final OffsetY: {offsetY:F2}. Final Point: {finalPoint:F2}");
+        Service.Log.Debug("----------------------------------------------------");
+
+        return finalPoint;
     }
 
     /// <summary>
@@ -377,7 +420,7 @@ public class VoxelPathfind(VoxelMap volume)
     /// 检查从 fromPoint 到 toPoint 的直线路径是否对角色来说是安全的。
     /// 使用 EnumerateVoxelsInLine 作为核心。
     /// </summary>
-    private bool IsPathSegmentSafe(Vector3 fromPoint, Vector3 toPoint, Vector3 characterHalfExtents, float maxAngleRadians)
+    private bool IsPathSegmentSafe(Vector3 fromPoint, Vector3 toPoint, Vector3 characterHalfExtents, float maxAngleRadians, float verticalClearanceRequirement = 3.0f)
     {
         var segment = toPoint - fromPoint;
         var distance = segment.Length();
@@ -394,36 +437,32 @@ public class VoxelPathfind(VoxelMap volume)
                 return false; // 整体坡度过大
             }
         }
-
-        // --- 核心检查：遍历路径上的所有体素 ---
-        var (fromVoxel, _) = Volume.FindLeafVoxel(fromPoint);
-        var (toVoxel, _) = Volume.FindLeafVoxel(toPoint);
-
-        if (fromVoxel == VoxelMap.InvalidVoxel || toVoxel == VoxelMap.InvalidVoxel)
+        const float checkInterval = 1.0f; // 每隔1米检查一次
+        for (float d = 0; d <= distance; d += checkInterval)
         {
-            return false; // 起点或终点无效
-        }
+            var currentPos = fromPoint + (segment * (d / distance));
 
-        foreach (var (voxelId, t, isEmpty) in VoxelSearch.EnumerateVoxelsInLine(Volume, fromVoxel, toVoxel, fromPoint, toPoint))
-        {
-            // 检查1: 路径是否穿过实心体素？
-            // 这是最基本的障碍物检查。
-            if (!isEmpty)
+            // 检查A: 角色自身是否能放下 (和原来一样)
+            if (VoxelSearch.FindNearestEmptyVoxel(Volume, currentPos, characterHalfExtents) == VoxelMap.InvalidVoxel)
             {
                 return false; // 路径被阻塞
             }
 
-            // 检查2: 在当前位置，角色是否有足够的站立空间？
-            // 这是最重要的体积检查，它同时考虑了地面、头顶和侧面空间。
-            // 我们利用 t 参数计算出角色在路径上的精确位置。
-            var currentPos = fromPoint + (segment * t);
+            // 检查B: 【新增】垂直方向是否开阔？
+            // 我们要求路径上下都有足够的空间，这样才算是“飞行路径”
+            var pointAbove = currentPos + new Vector3(0, verticalClearanceRequirement, 0);
+            var pointBelow = currentPos - new Vector3(0, verticalClearanceRequirement, 0);
 
-            // 使用你现有的函数来检查这个位置是否能容纳角色。
-            // 这个函数会检查以 currentPos 为中心，characterHalfExtents 为大小的区域是否完全在可通行空间内。
-            if (VoxelSearch.FindNearestEmptyVoxel(Volume, currentPos, characterHalfExtents) == VoxelMap.InvalidVoxel)
+            // 如果路径上方不远处有障碍物，则认为这条捷径不是一个好的“飞行”选择
+            if (VoxelSearch.FindNearestEmptyVoxel(Volume, pointAbove, new Vector3(0.1f, 0.1f, 0.1f)) == VoxelMap.InvalidVoxel)
             {
-                // 在路径上的这个点，角色无法站立（可能离墙太近，或头顶太低，或脚下是悬崖）
-                return false;
+                return false; // 头顶空间不足，拒绝此捷径
+            }
+
+            // (可选) 也可以检查下方，但对于飞行来说，头顶更重要
+            if (VoxelSearch.FindNearestEmptyVoxel(Volume, pointBelow, new Vector3(0.1f, 0.1f, 0.1f)) == VoxelMap.InvalidVoxel)
+            {
+                return false; // 脚下空间不足
             }
         }
 
