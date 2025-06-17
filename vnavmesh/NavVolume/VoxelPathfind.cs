@@ -674,8 +674,8 @@ public class VoxelPathfind(VoxelMap volume)
     }
 
     // 惩罚乘数：一个足够大的值，让算法“害怕”选择陡峭的路径。
-    // 10.0f 意味着走一段陡峭路径的成本是其物理长度的10倍。
-    private const float SteepSlopePenalty = 10.0f;
+    // 10.0f 意味着走一段陡峭路径的成本是其物理长度的20倍。
+    private const float SteepSlopePenalty = 20.0f;
 
     // 陡峭角度阈值：超过这个角度的移动将被施加惩罚。
     // 建议值在 60 到 80 度之间。
