@@ -68,7 +68,7 @@ public class VoxelPathfind(VoxelMap volume)
 
         // 定义后处理参数
         const int NumProbes = 5;
-        const float ProbeInterval = 1f;
+        const float ProbeInterval = .5f;
         const float MaxAngleDegrees = 56.0f;
         const float MaxAngleRadians = MaxAngleDegrees * (float)(Math.PI / 180.0);
 
@@ -101,12 +101,11 @@ public class VoxelPathfind(VoxelMap volume)
             {
                 var direction = segment_1_2 / segmentLength;
                 const int lookAheadSteps = 10; // 最多探测10步
-                const float lookAheadInterval = 0.5f; // 每步的距离
 
                 // 从 p1_orig 开始，沿着 p1->p2 方向探测
                 for (int i = 0; i <= lookAheadSteps; i++)
                 {
-                    float dist = i * lookAheadInterval;
+                    float dist = i * ProbeInterval;
                     if (dist > segmentLength) break; // 不超出 p2
 
                     var probePoint = p1_orig + (direction * dist);
@@ -420,7 +419,7 @@ public class VoxelPathfind(VoxelMap volume)
     /// 检查从 fromPoint 到 toPoint 的直线路径是否对角色来说是安全的。
     /// 使用 EnumerateVoxelsInLine 作为核心。
     /// </summary>
-    private bool IsPathSegmentSafe(Vector3 fromPoint, Vector3 toPoint, Vector3 characterHalfExtents, float maxAngleRadians, float verticalClearanceRequirement = 3.0f)
+    private bool IsPathSegmentSafe(Vector3 fromPoint, Vector3 toPoint, Vector3 characterHalfExtents, float maxAngleRadians, float verticalClearanceRequirement = 4.0f)
     {
         var segment = toPoint - fromPoint;
         var distance = segment.Length();
@@ -437,7 +436,7 @@ public class VoxelPathfind(VoxelMap volume)
                 return false; // 整体坡度过大
             }
         }
-        const float checkInterval = 1.0f; // 每隔1米检查一次
+        const float checkInterval = .5f; // 每隔.5米检查一次
         for (float d = 0; d <= distance; d += checkInterval)
         {
             var currentPos = fromPoint + (segment * (d / distance));
