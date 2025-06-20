@@ -215,7 +215,7 @@ public class VoxelPathfind(VoxelMap volume)
                 var backupVector = secondToLastAdjustedPoint - lastAdjustedIntermediatePoint;
                 var backupDistance = backupVector.Length();
 
-                if (backupDistance > 0.01f)
+                if (backupDistance > 0.5f)
                 {
                     var backupDirection = Vector3.Normalize(backupVector);
                     const float probeStep = 0.5f; // 后退探测的步长
