@@ -16,11 +16,12 @@ public class FollowPath : IDisposable
     private const float SIGNIFICANT_MOVEMENT_THRESHOLD = 3f; // 显著移动阈值
     private const int   STUCK_COUNTER_THRESHOLD        = 3;  // 连续几次检测卡住才判定为真卡住
 
-    public bool          MovementAllowed { get; set; } = true;
-    public bool          IgnoreDeltaY    { get; set; }
-    public float         Tolerance       { get; set; } = 1f;
-    public List<Vector3> Waypoints       { get; set; } = [];
-    public bool          IsStuck         { get; set; }
+    public bool          MovementAllowed     { get; set; } = true;
+    public bool          IgnoreDeltaY        { get; set; }
+    public float         Tolerance           { get; set; } = 1f;
+    public float         DestinationTolerance { get; set; } = 0;
+    public List<Vector3> Waypoints           { get; set; } = [];
+    public bool          IsStuck             { get; set; }
 
     private readonly IDalamudPluginInterface PI;
     private readonly NavmeshManager          NavmeshManager;
@@ -106,6 +107,12 @@ public class FollowPath : IDisposable
             var a = Waypoints[0];
             var b = player.Position;
             var c = posPreviousFrame ?? b;
+
+            if (DestinationTolerance > 0 && (b - Waypoints[^1]).Length() <= DestinationTolerance)
+            {
+                Waypoints.Clear();
+                break;
+            }
 
             if (IgnoreDeltaY)
             {
@@ -818,11 +825,12 @@ public class FollowPath : IDisposable
         }
     }
 
-    public void Move(List<Vector3> waypoints, bool ignoreDeltaY)
+    public void Move(List<Vector3> waypoints, bool ignoreDeltaY, float destTolerance = 0)
     {
         UpdateSharedState(true);
-        Waypoints    = waypoints;
-        IgnoreDeltaY = ignoreDeltaY;
+        Waypoints            = waypoints;
+        IgnoreDeltaY         = ignoreDeltaY;
+        DestinationTolerance = destTolerance;
 
         // 重置卡住检测状态
         ResetStuckState();

@@ -19,6 +19,7 @@ public class AsyncMoveRequest : IDisposable
 
     private Task<List<Vector3>>? PendingTask;
     private bool                 PendingFly;
+    private float                PendingDestRange;
     private int                  RecalculationAttempts;
     
     private CancellationTokenSource? currentCTS;
@@ -107,7 +108,7 @@ public class AsyncMoveRequest : IDisposable
             else
             {
                 RecalculationAttempts = 0;
-                FollowPath.Move(PendingTask.Result, !PendingFly);
+                FollowPath.Move(PendingTask.Result, !PendingFly, PendingDestRange);
             }
                 
             // 触发路径计算完成事件
@@ -128,17 +129,19 @@ public class AsyncMoveRequest : IDisposable
     /// </summary>
     /// <param name="dest">目标位置</param>
     /// <param name="fly">是否允许飞行</param>
+    /// <param name="range">目标容差范围，0表示精确到达</param>
     /// <returns>请求是否成功发起</returns>
-    public bool MoveTo(Vector3 dest, bool fly)
+    public bool MoveTo(Vector3 dest, bool fly, float range = 0)
     {
         if (PendingTask != null) return false;
 
-        Service.Log.Info($"准备 {(fly ? "飞行" : "步行")} 至 {dest:f3}");
+        var toleranceStr = range > 0 ? $" 容差范围{range}距离内" : "";
+        Service.Log.Info($"准备 {(fly ? "飞行" : "步行")} 至 {dest:f3}{toleranceStr}");
 
-        currentCTS  = new();
-        PendingTask = NavmeshManager.QueryPath(Service.ClientState.LocalPlayer?.Position ?? default, dest, fly, currentCTS.Token);
-        PendingFly  = fly;
-
+        currentCTS      = new();
+        PendingTask     = NavmeshManager.QueryPath(Service.ClientState.LocalPlayer?.Position ?? default, dest, fly, currentCTS.Token, range);
+        PendingFly      = fly;
+        PendingDestRange = range;
         return true;
     }
 
@@ -182,6 +185,7 @@ public class AsyncMoveRequest : IDisposable
 
         RecalculationAttempts = 0;
         PendingFly            = false;
+        PendingDestRange      = 0;
 
         return true;
     }
@@ -216,8 +220,9 @@ public class AsyncMoveRequest : IDisposable
         currentCTS?.Cancel();
         currentCTS = new();
         
-        PendingTask = NavmeshManager.QueryPath(currentPos, targetPos, fly, currentCTS.Token);
-        PendingFly  = fly;
+        PendingTask      = NavmeshManager.QueryPath(currentPos, targetPos, fly, currentCTS.Token);
+        PendingFly       = fly;
+        PendingDestRange = 0;  // 路径重新计算时使用默认范围
     }
 
     #endregion

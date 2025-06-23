@@ -1,10 +1,10 @@
-﻿using System;
-using System.Collections.Concurrent;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using DotRecast.Core.Numerics;
 using DotRecast.Detour;
 using Navmesh.NavVolume;
 
@@ -19,9 +19,17 @@ public class NavmeshQuery
         public void Process(DtMeshTile tile, DtPoly poly, long refs) => Result.Add(refs);
     }
 
+    private class ToleranceHeuristic(float tolerance) : IDtQueryHeuristic
+    {
+        float IDtQueryHeuristic.GetCost(RcVec3f neighbourPos, RcVec3f endPos)
+        {
+            var dist = RcVec3f.Distance(neighbourPos, endPos) * DtDefaultQueryHeuristic.H_SCALE;
+            return dist < tolerance ? -1 : dist;
+        }
+    }
+
     public readonly DtNavMeshQuery MeshQuery;
     public readonly VoxelPathfind? VolumeQuery;
-    
     private readonly IDtQueryFilter _filter = new DtQueryDefaultFilter();
 
     public  List<long> LastPath => _lastPath;
@@ -34,7 +42,7 @@ public class NavmeshQuery
             VolumeQuery = new(navmesh.Volume);
     }
 
-    public List<Vector3> PathfindMesh(Vector3 from, Vector3 to, bool useRaycast, bool useStringPulling, CancellationToken cancel)
+    public List<Vector3> PathfindMesh(Vector3 from, Vector3 to, bool useRaycast, bool useStringPulling, CancellationToken cancel, float range = 0)
     {
         var startRef = FindNearestMeshPoly(from);
         var endRef   = FindNearestMeshPoly(to);
@@ -48,14 +56,12 @@ public class NavmeshQuery
         var timer = Timer.Create();
         _lastPath.Clear();
 
-        // 添加随机化因子到寻路选项中
-        var options = 0;
-        if (useRaycast)
-            options |= DtFindPathOptions.DT_FINDPATH_ANY_ANGLE;
-
-        var opt = new DtFindPathOption(options, useRaycast ? 5 : 0);
-
-        // TODO: DotRecast库没有直接支持随机化，可考虑修改权重或者在后处理中添加随机性
+        // 根据range参数选择合适的启发式算法，支持容差范围内的寻路优化
+        var heuristic = range > 0 ? new ToleranceHeuristic(range) : DtDefaultQueryHeuristic.Default;
+        var options = useRaycast ? DtFindPathOptions.DT_FINDPATH_ANY_ANGLE : 0;
+        var raycastLimit = useRaycast ? 5 : 0;
+        
+        var opt = new DtFindPathOption(heuristic, options, raycastLimit);
         MeshQuery.FindPath(startRef, endRef, from.SystemToRecast(), to.SystemToRecast(), _filter, ref _lastPath, opt);
 
         if (_lastPath.Count == 0)

@@ -156,7 +156,7 @@ public sealed class NavmeshManager : IDisposable
     private static bool InCutscene =>
         Service.Condition[ConditionFlag.WatchingCutscene] || Service.Condition[ConditionFlag.OccupiedInCutSceneEvent];
 
-    public Task<List<Vector3>> QueryPath(Vector3 from, Vector3 to, bool flying, CancellationToken externalCancel = default)
+    public Task<List<Vector3>> QueryPath(Vector3 from, Vector3 to, bool flying, CancellationToken externalCancel = default, float range = 0)
     {
         if (currentCTS == null)
             throw new Exception("无法开始查询, 导航数据仍在构建过程中");
@@ -186,7 +186,7 @@ public sealed class NavmeshManager : IDisposable
                 Log($"执行从 {from} 到 {to} 的寻路");
                 return flying
                            ? Query.PathfindVolume(from, to, UseRaycasts, UseStringPulling, progressCallback, combined.Token)
-                           : Query.PathfindMesh(from, to, UseRaycasts, UseStringPulling, combined.Token);
+                           : Query.PathfindMesh(from, to, UseRaycasts, UseStringPulling, combined.Token, range);
             }, combined.Token);
             Log($"寻路完成: {path.Count} 个路径点");
 
