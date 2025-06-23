@@ -57,7 +57,7 @@ public class NavmeshQuery
         _lastPath.Clear();
 
         // 根据range参数选择合适的启发式算法，支持容差范围内的寻路优化
-        var heuristic = range > 0 ? new ToleranceHeuristic(range) : DtDefaultQueryHeuristic.Default;
+        IDtQueryHeuristic heuristic = range > 0 ? new ToleranceHeuristic(range) : DtDefaultQueryHeuristic.Default;
         var options = useRaycast ? DtFindPathOptions.DT_FINDPATH_ANY_ANGLE : 0;
         var raycastLimit = useRaycast ? 5 : 0;
         
