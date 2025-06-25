@@ -28,22 +28,25 @@ public class NavmeshBuilder
     public int             NumTilesZ;
     public Navmesh         Navmesh; // should not be accessed while building tiles
 
-    private readonly int   _walkableClimbVoxels;
-    private readonly int   _walkableHeightVoxels;
-    private readonly int   _walkableRadiusVoxels;
-    private readonly float _walkableNormalThreshold;
-    private readonly int   _borderSizeVoxels;
-    private readonly float _borderSizeWorld;
-    private readonly int   _tileSizeXVoxels;
-    private readonly int   _tileSizeZVoxels;
-    private readonly int   _voxelizerNumX = 1;
-    private readonly int   _voxelizerNumY = 1;
-    private readonly int   _voxelizerNumZ = 1;
+    private NavmeshCustomization customization;
+
+    private int   _walkableClimbVoxels;
+    private int   _walkableHeightVoxels;
+    private int   _walkableRadiusVoxels;
+    private float _walkableNormalThreshold;
+    private int   _borderSizeVoxels;
+    private float _borderSizeWorld;
+    private int   _tileSizeXVoxels;
+    private int   _tileSizeZVoxels;
+    private int   _voxelizerNumX = 1;
+    private int   _voxelizerNumY = 1;
+    private int   _voxelizerNumZ = 1;
 
     public NavmeshBuilder(SceneDefinition scene, NavmeshCustomization customization)
     {
         Settings = customization.Settings;
         var flyable = customization.IsFlyingSupported(scene);
+        this.customization = customization;
 
         // load all meshes
         Scene = new(scene);
@@ -219,6 +222,7 @@ public class NavmeshBuilder
 
             buildBvTree = true // TODO: false if using layers?
         };
+        customization.CustomizeSettings(navmeshConfig);
         var navmeshData = DtNavMeshBuilder.CreateNavMeshData(navmeshConfig);
 
         // 10. add tile to the navmesh

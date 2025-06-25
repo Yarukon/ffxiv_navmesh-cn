@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -21,9 +20,17 @@ public class NavmeshQuery
         public void Process(DtMeshTile tile, DtPoly poly, long refs) => Result.Add(refs);
     }
 
+    private class ToleranceHeuristic(float tolerance) : IDtQueryHeuristic
+    {
+        float IDtQueryHeuristic.GetCost(RcVec3f neighbourPos, RcVec3f endPos)
+        {
+            var dist = RcVec3f.Distance(neighbourPos, endPos) * DtDefaultQueryHeuristic.H_SCALE;
+            return dist < tolerance ? -1 : dist;
+        }
+    }
+
     public readonly DtNavMeshQuery MeshQuery;
     public readonly VoxelPathfind? VolumeQuery;
-    
     private readonly IDtQueryFilter _filter = new DtQueryDefaultFilter();
     internal static readonly IDtQueryFilter _filter2 = new RandomizedQueryFilter();
     internal readonly PathRandomizer _randomizer;
@@ -44,7 +51,7 @@ public class NavmeshQuery
         _randomizer = new(MeshQuery);
     }
 
-    public List<Vector3> PathfindMesh(Vector3 from, Vector3 to, bool useRaycast, bool useStringPulling, CancellationToken cancel)
+    public List<Vector3> PathfindMesh(Vector3 from, Vector3 to, bool useRaycast, bool useStringPulling, CancellationToken cancel, float range = 0)
     {
         var startRef = FindNearestMeshPoly(from);
         var endRef   = FindNearestMeshPoly(to);
@@ -58,13 +65,14 @@ public class NavmeshQuery
         var timer = Timer.Create();
         _lastPath.Clear();
 
-        var options = 0;
-        if (useRaycast)
-            options |= DtFindPathOptions.DT_FINDPATH_ANY_ANGLE;
+        // 根据range参数选择合适的启发式算法，支持容差范围内的寻路优化
+        IDtQueryHeuristic heuristic = range > 0 ? new ToleranceHeuristic(range) : DtDefaultQueryHeuristic.Default;
+        var options = useRaycast ? DtFindPathOptions.DT_FINDPATH_ANY_ANGLE : 0;
+        var raycastLimit = useRaycast ? 5 : 0;
+        
+        var opt = new DtFindPathOption(heuristic, options, raycastLimit);
+        MeshQuery.FindPath(startRef, endRef, from.SystemToRecast(), to.SystemToRecast(), _filter, ref _lastPath, opt);
 
-        var opt = new DtFindPathOption(options, useRaycast ? 5 : 0);
-
-        MeshQuery.FindPath(startRef, endRef, from.SystemToRecast(), to.SystemToRecast(), Service.Config.UseRandomPathGen ? _filter2 : _filter, ref _lastPath, opt);
         if (_lastPath.Count == 0)
         {
             Service.Log.Error($"从 {from} ({startRef:X}) 到 {to} ({endRef:X}) 的路径查找失败：无法在网格上找到路径");
