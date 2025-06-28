@@ -29,7 +29,7 @@ public class VoxelPathfind(VoxelMap volume)
     public Span<Node> NodeSpan =>
         CollectionsMarshal.AsSpan(Nodes);
 
-    private readonly Vector3 CharaHalfExtents = new(0.5f, 2f, 0.5f);
+    private readonly Vector3 CharaHalfExtents = new(5f, 5f, 5f);
 
     public List<(ulong voxel, Vector3 p)> FindPath(
         ulong fromVoxel, ulong toVoxel, Vector3 fromPos, Vector3 toPos, bool useRaycast, bool returnIntermediatePoints, 
@@ -406,22 +406,48 @@ public class VoxelPathfind(VoxelMap volume)
         return (upClear, downClear);
     }
 
+    private static readonly Vector3[] ProbeDirections = new Vector3[]
+    {
+        // 轴向 (6)
+        new Vector3(1, 0, 0), new Vector3(-1, 0, 0),
+        new Vector3(0, 1, 0), new Vector3(0, -1, 0),
+        new Vector3(0, 0, 1), new Vector3(0, 0, -1),
+        // 面-对角线 (12)
+        Vector3.Normalize(new Vector3(1, 1, 0)), Vector3.Normalize(new Vector3(1, -1, 0)), Vector3.Normalize(new Vector3(-1, 1, 0)), Vector3.Normalize(new Vector3(-1, -1, 0)),
+        Vector3.Normalize(new Vector3(1, 0, 1)), Vector3.Normalize(new Vector3(1, 0, -1)), Vector3.Normalize(new Vector3(-1, 0, 1)), Vector3.Normalize(new Vector3(-1, 0, -1)),
+        Vector3.Normalize(new Vector3(0, 1, 1)), Vector3.Normalize(new Vector3(0, 1, -1)), Vector3.Normalize(new Vector3(0, -1, 1)), Vector3.Normalize(new Vector3(0, -1, -1)),
+        // 角-对角线 (8)
+        Vector3.Normalize(new Vector3(1, 1, 1)), Vector3.Normalize(new Vector3(1, 1, -1)), Vector3.Normalize(new Vector3(1, -1, 1)), Vector3.Normalize(new Vector3(1, -1, -1)),
+        Vector3.Normalize(new Vector3(-1, 1, 1)), Vector3.Normalize(new Vector3(-1, 1, -1)), Vector3.Normalize(new Vector3(-1, -1, 1)), Vector3.Normalize(new Vector3(-1, -1, -1))
+    };
+
     private Vector3 Find3DCenter(VoxelMap volume, Vector3 position, Vector3 characterHalfExtents, float maxProbeDistance = 5.0f)
     {
-        // 探测六个方向
-        float distRight = ProbeDistance(volume, position, Vector3.UnitX, maxProbeDistance, characterHalfExtents);
-        float distLeft = ProbeDistance(volume, position, -Vector3.UnitX, maxProbeDistance, characterHalfExtents);
-        float distUp = ProbeDistance(volume, position, Vector3.UnitY, maxProbeDistance, characterHalfExtents);
-        float distDown = ProbeDistance(volume, position, -Vector3.UnitY, maxProbeDistance, characterHalfExtents);
-        float distForward = ProbeDistance(volume, position, Vector3.UnitZ, maxProbeDistance, characterHalfExtents);
-        float distBackward = ProbeDistance(volume, position, -Vector3.UnitZ, maxProbeDistance, characterHalfExtents);
+        var totalOffset = Vector3.Zero;
+        int validPairs = 0;
 
-        // 计算三维中心
-        float optimalX = position.X - distLeft + ((distLeft + distRight) / 2.0f);
-        float optimalY = position.Y - distDown + ((distDown + distUp) / 2.0f);
-        float optimalZ = position.Z - distBackward + ((distBackward + distForward) / 2.0f);
+        // 我们将26个方向视为13对相反的方向
+        for (int i = 0; i < ProbeDirections.Length / 2; i++)
+        {
+            var dir = ProbeDirections[i * 2];      // 正方向
+            var antiDir = ProbeDirections[(i * 2) + 1]; // 反方向
 
-        var optimalPosition = new Vector3(optimalX, optimalY, optimalZ);
+            float distPositive = ProbeDistance(volume, position, dir, maxProbeDistance, characterHalfExtents);
+            float distNegative = ProbeDistance(volume, position, antiDir, maxProbeDistance, characterHalfExtents);
+
+            var axisOffset = dir * (distPositive - distNegative) / 2.0f;
+
+            totalOffset += axisOffset;
+            validPairs++;
+        }
+
+        if (validPairs == 0)
+        {
+            return position;
+        }
+
+        var averageOffset = totalOffset / validPairs;
+        var optimalPosition = position + averageOffset;
 
         // 安全校验
         if (VoxelSearch.FindNearestEmptyVoxel(volume, optimalPosition, characterHalfExtents) == VoxelMap.InvalidVoxel)
@@ -454,53 +480,66 @@ public class VoxelPathfind(VoxelMap volume)
     /// 检查从 fromPoint 到 toPoint 的直线路径是否对角色来说是安全的。
     /// 使用 EnumerateVoxelsInLine 作为核心。
     /// </summary>
-    private bool IsPathSegmentSafe(Vector3 fromPoint, Vector3 toPoint, Vector3 characterHalfExtents, float maxAngleRadians, float verticalClearanceRequirement = 4.0f)
+    private bool IsPathSegmentSafe(Vector3 fromPoint, Vector3 toPoint, Vector3 characterHalfExtents, float maxSlopeAngleRadians, float requiredClearance = 5.0f)
     {
-        var segment = toPoint - fromPoint;
-        var distance = segment.Length();
-        if (distance < 0.1f) return true;
+        // 步骤1: 将世界坐标转换为体素ID
+        // 假设你有这样的函数来获取坐标点所在的体素ID。
+        // 你可能需要根据自己的VoxelMap API进行调整。
+        ulong fromVoxel = VoxelSearch.FindNearestEmptyVoxel(Volume, fromPoint, characterHalfExtents);
+        ulong toVoxel = VoxelSearch.FindNearestEmptyVoxel(Volume, toPoint, characterHalfExtents);
 
-        // --- 快速失败检查 (可选但推荐) ---
-        // 1. 检查整体坡度，如果整段路都太陡，直接拒绝
-        var horizontalDist = new Vector2(segment.X, segment.Z).Length();
-        if (horizontalDist > 0.01f)
+        // 如果起点或终点在地图外或无效，则路径不安全
+        if (fromVoxel == VoxelMap.InvalidVoxel || toVoxel == VoxelMap.InvalidVoxel)
         {
-            var maxVerticalChange = horizontalDist * MathF.Tan(maxAngleRadians);
-            if (Math.Abs(segment.Y) > maxVerticalChange)
-            {
-                return false; // 整体坡度过大
-            }
-        }
-        const float checkInterval = .5f; // 每隔.5米检查一次
-        for (float d = 0; d <= distance; d += checkInterval)
-        {
-            var currentPos = fromPoint + (segment * (d / distance));
-
-            // 检查A: 角色自身是否能放下 (和原来一样)
-            if (VoxelSearch.FindNearestEmptyVoxel(Volume, currentPos, characterHalfExtents) == VoxelMap.InvalidVoxel)
-            {
-                return false; // 路径被阻塞
-            }
-
-            // 检查B: 【新增】垂直方向是否开阔？
-            // 我们要求路径上下都有足够的空间，这样才算是“飞行路径”
-            var pointAbove = currentPos + new Vector3(0, verticalClearanceRequirement, 0);
-            var pointBelow = currentPos - new Vector3(0, verticalClearanceRequirement, 0);
-
-            // 如果路径上方不远处有障碍物，则认为这条捷径不是一个好的“飞行”选择
-            if (VoxelSearch.FindNearestEmptyVoxel(Volume, pointAbove, new Vector3(0.1f, 0.1f, 0.1f)) == VoxelMap.InvalidVoxel)
-            {
-                return false; // 头顶空间不足，拒绝此捷径
-            }
-
-            // (可选) 也可以检查下方，但对于飞行来说，头顶更重要
-            if (VoxelSearch.FindNearestEmptyVoxel(Volume, pointBelow, new Vector3(0.1f, 0.1f, 0.1f)) == VoxelMap.InvalidVoxel)
-            {
-                return false; // 脚下空间不足
-            }
+            return false;
         }
 
-        // 如果所有沿途的体素都通过了检查，那么这条路径段就是安全的。
+        // 步骤2: 正确调用 EnumerateVoxelsInLine
+        var voxelsOnPath = VoxelSearch.EnumerateVoxelsInLine(Volume, fromVoxel, toVoxel, fromPoint, toPoint);
+
+        Vector3? previousVoxelCenter = null;
+        var clearanceCheckHalfExtents = characterHalfExtents + new Vector3(requiredClearance);
+
+        // 步骤3: 遍历路径上的每个体素并进行检查
+        foreach (var (voxelId, t, isEmpty) in voxelsOnPath)
+        {
+            // 检查A: 体素本身是否是实体？
+            // EnumerateVoxelsInLine 直接告诉我们体素是否为空，这是一个很好的快速失败路径。
+            if (!isEmpty)
+            {
+                return false; // 路径直接穿过了一个实体方块
+            }
+
+            // 获取当前体素的中心点，用于更精确的检查
+            // 同样，假设你有这个辅助函数
+            Vector3 currentVoxelCenter = Volume.GetVoxelCenter(voxelId);
+
+            // 检查B: 周围是否有足够的安全空间？
+            // 这个检查比检查A更严格，因为它要求体素周围有额外的clearance。
+            if (VoxelSearch.FindNearestEmptyVoxel(Volume, currentVoxelCenter, clearanceCheckHalfExtents) == VoxelMap.InvalidVoxel)
+            {
+                // 路径点周围空间不足
+                return false;
+            }
+
+            // 检查C: 局部坡度是否过大？
+            if (previousVoxelCenter.HasValue)
+            {
+                var step = currentVoxelCenter - previousVoxelCenter.Value;
+                var horizontalDist = new Vector2(step.X, step.Z).Length();
+                if (horizontalDist > 0.01f)
+                {
+                    var slopeAngle = MathF.Atan(Math.Abs(step.Y) / horizontalDist);
+                    if (slopeAngle > maxSlopeAngleRadians)
+                    {
+                        return false; // 路径中有过于陡峭的台阶
+                    }
+                }
+            }
+
+            previousVoxelCenter = currentVoxelCenter;
+        }
+
         return true;
     }
 
