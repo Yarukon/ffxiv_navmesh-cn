@@ -850,8 +850,8 @@ public class VoxelPathfind(VoxelMap volume)
         switch (transitionLevel)
         {
             case VoxelLevel.L2_Fine:
-                maxSlopeAngleDegrees = 50.0f;
-                steepSlopePenalty = 15.0f;
+                maxSlopeAngleDegrees = 56.0f;
+                steepSlopePenalty = 8.0f;
                 break;
 
             case VoxelLevel.L1_Medium:
@@ -924,7 +924,16 @@ public class VoxelPathfind(VoxelMap volume)
             // 如果坡度超过我们设定的阈值，则施加惩罚
             if (slopeAngle > maxSlopeAngleRadians)
             {
-                slopePenaltyMultiplier = steepSlopePenalty;
+                // 从 1.0 (无惩罚) 到 steepSlopePenalty (最大惩罚) 的线性插值
+                // 90度 (Math.PI / 2) 是最大坡度
+                const float fullSteepAngle = (float)(Math.PI / 2.0);
+
+                // 计算当前坡度在惩罚区间内的位置 (0 to 1)
+                float t = (slopeAngle - maxSlopeAngleRadians) / (fullSteepAngle - maxSlopeAngleRadians);
+                t = Math.Clamp(t, 0.0f, 1.0f); // 确保 t 在 [0, 1] 区间
+
+                // 使用 t 进行线性插值
+                slopePenaltyMultiplier = 1.0f + (t * (steepSlopePenalty - 1.0f));
             }
         }
 
