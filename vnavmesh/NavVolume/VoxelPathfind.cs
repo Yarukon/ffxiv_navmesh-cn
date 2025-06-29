@@ -1109,11 +1109,10 @@ public class VoxelPathfind(VoxelMap volume)
         return VoxelLevel.L0_Coarse;
     }
 
+    private static readonly Random Rnd = new();
     public static void GenerateRandomThisTime()
     {
-        // Scale random factor to be a small value that influences path selection
-        // but doesn't significantly impact pathfinding accuracy
-        CurRandomFactor = Service.Config.VoxelPathfindRandomFactor > 0f ? (float)new Random().NextDouble() * Service.Config.VoxelPathfindRandomFactor : 0;
+        CurRandomFactor = Service.Config.VoxelPathfindRandomFactor > 0f ? (float)Rnd.NextDouble() * Service.Config.VoxelPathfindRandomFactor : 0;
     }
 
     public struct Node
