@@ -483,8 +483,6 @@ public class VoxelPathfind(VoxelMap volume)
     private bool IsPathSegmentSafe(Vector3 fromPoint, Vector3 toPoint, Vector3 characterHalfExtents, float maxSlopeAngleRadians, float requiredClearance = 5.0f)
     {
         // 步骤1: 将世界坐标转换为体素ID
-        // 假设你有这样的函数来获取坐标点所在的体素ID。
-        // 你可能需要根据自己的VoxelMap API进行调整。
         ulong fromVoxel = VoxelSearch.FindNearestEmptyVoxel(Volume, fromPoint, characterHalfExtents);
         ulong toVoxel = VoxelSearch.FindNearestEmptyVoxel(Volume, toPoint, characterHalfExtents);
 
@@ -494,8 +492,7 @@ public class VoxelPathfind(VoxelMap volume)
             return false;
         }
 
-        // 步骤2: 正确调用 EnumerateVoxelsInLine
-        var voxelsOnPath = VoxelSearch.EnumerateVoxelsInLine(Volume, fromVoxel, toVoxel, fromPoint, toPoint);
+        var voxelsOnPath = VoxelSearch.EnumerateVoxelsInLinePooled(Volume, fromVoxel, toVoxel, fromPoint, toPoint);
 
         Vector3? previousVoxelCenter = null;
         var clearanceCheckHalfExtents = characterHalfExtents + new Vector3(requiredClearance);
