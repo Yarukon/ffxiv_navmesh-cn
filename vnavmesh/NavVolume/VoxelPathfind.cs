@@ -68,7 +68,7 @@ public class VoxelPathfind(VoxelMap volume)
 
         // 定义后处理参数
         const int NumProbes = 5;
-        const float ProbeInterval = .5f;
+        const float ProbeInterval = 1.5f;
         const float MaxAngleDegrees = 56.0f;
         const float MaxAngleRadians = MaxAngleDegrees * (float)(Math.PI / 180.0);
 
@@ -463,7 +463,7 @@ public class VoxelPathfind(VoxelMap volume)
     /// </summary>
     private float ProbeDistance(VoxelMap volume, Vector3 startPos, Vector3 direction, float maxDistance, Vector3 characterHalfExtents)
     {
-        const float step = 0.5f; // 步进距离
+        const float step = 1.5f; // 步进距离
         for (float d = step; d <= maxDistance; d += step)
         {
             var probePos = startPos + (direction * d);
@@ -850,13 +850,13 @@ public class VoxelPathfind(VoxelMap volume)
         switch (transitionLevel)
         {
             case VoxelLevel.L2_Fine:
-                maxSlopeAngleDegrees = 56.0f;
-                steepSlopePenalty = 8.0f;
+                maxSlopeAngleDegrees = 65.0f;
+                steepSlopePenalty = 6.0f;
                 break;
 
             case VoxelLevel.L1_Medium:
                 maxSlopeAngleDegrees = 75.0f;
-                steepSlopePenalty = 4.0f;
+                steepSlopePenalty = 3.0f;
                 break;
 
             case VoxelLevel.L0_Coarse:
