@@ -847,12 +847,12 @@ public class VoxelPathfind(VoxelMap volume)
         switch (transitionLevel)
         {
             case VoxelLevel.L2_Fine:
-                maxSlopeAngleDegrees = 65.0f;
+                maxSlopeAngleDegrees = 75.0f;
                 steepSlopePenalty = 6.0f;
                 break;
 
             case VoxelLevel.L1_Medium:
-                maxSlopeAngleDegrees = 75.0f;
+                maxSlopeAngleDegrees = 80.0f;
                 steepSlopePenalty = 3.0f;
                 break;
 
