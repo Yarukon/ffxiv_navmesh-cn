@@ -126,7 +126,7 @@ public sealed class Plugin : IDalamudPlugin
         DtrProvider.Update();
     }
 
-    /*public static Vector3 StartPos = new();
+    public static Vector3 StartPos = new();
     public static Vector3 EndPos = new();
     public static List<Vector3> OriginalPath = [];
     public static List<Vector3> DensedPath = [];
@@ -135,7 +135,7 @@ public sealed class Plugin : IDalamudPlugin
     public static bool OriginalPath_Locked = false;
     public static bool DensedPath_Locked = false;
     public static bool CenteredPath_Locked = false;
-    public static bool Paths_Locked = false;*/
+    public static bool Paths_Locked = false;
 
     private void Draw()
     {
@@ -146,7 +146,7 @@ public sealed class Plugin : IDalamudPlugin
         // RenderDebug();
     }
 
-    /*private void RenderDebug()
+    private void RenderDebug()
     {
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(0, 0));
         ImGui.SetNextWindowViewport(ImGui.GetMainViewport().ID);
@@ -304,7 +304,7 @@ public sealed class Plugin : IDalamudPlugin
 
             ImGui.End();
         }
-    }*/
+    }
 
     private void OnCommand(string command, string arguments)
     {
