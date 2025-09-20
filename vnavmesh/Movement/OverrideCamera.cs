@@ -1,4 +1,4 @@
-﻿using Dalamud.Hooking;
+using Dalamud.Hooking;
 using Dalamud.Utility.Signatures;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
 using System;
@@ -41,7 +41,7 @@ public unsafe class OverrideCamera : IDisposable
     public Angle SpeedV = 360.Degrees(); // per second
 
     private delegate void RMICameraDelegate(CameraEx* self, int inputMode, float speedH, float speedV);
-    [Signature("E8 ?? ?? ?? ?? EB 05 E8 ?? ?? ?? ?? 44 0F 28 4C 24 ??")]
+    [Signature("48 ?? ?? 53 48 ?? ?? ?? ?? ?? ?? 44 0F 29 50")]
     private Hook<RMICameraDelegate> _rmiCameraHook = null!;
 
     public OverrideCamera()

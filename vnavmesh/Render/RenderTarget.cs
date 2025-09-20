@@ -1,4 +1,5 @@
-﻿using SharpDX.Direct3D;
+using Dalamud.Bindings.ImGui;
+using SharpDX.Direct3D;
 using SharpDX.Direct3D11;
 using SharpDX.DXGI;
 using System;
@@ -19,6 +20,9 @@ public class RenderTarget : IDisposable
     private DepthStencilState _dss;
 
     public nint ImguiHandle => _rtSRV.NativePointer;
+
+    private ImTextureID _textureId = ImTextureID.Null;
+    public ImTextureID TextureId => _textureId;
 
     public RenderTarget(RenderContext ctx, int width, int height, bool inverseZ = true)
     {
@@ -81,6 +85,8 @@ public class RenderTarget : IDisposable
         var dssDesc = DepthStencilStateDescription.Default();
         dssDesc.DepthComparison = _inverseZ ? Comparison.GreaterEqual : Comparison.Less;
         _dss = new(ctx.Device, dssDesc);
+
+        _textureId = new(ImguiHandle);
     }
 
     public void Dispose()

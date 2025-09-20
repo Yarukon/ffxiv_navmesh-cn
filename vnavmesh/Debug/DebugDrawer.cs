@@ -1,6 +1,6 @@
-﻿using Dalamud.Interface.Utility;
+using Dalamud.Interface.Utility;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision.Math;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Navmesh.Render;
 using System;
 using System.Collections.Generic;
@@ -93,7 +93,7 @@ public unsafe class DebugDrawer : IDisposable
 
         if (RenderTarget != null)
         {
-            ImGui.GetWindowDrawList().AddImage(RenderTarget.ImguiHandle, new(), new(RenderTarget.Size.X, RenderTarget.Size.Y));
+            ImGui.GetWindowDrawList().AddImage(RenderTarget.TextureId, new(), new(RenderTarget.Size.X, RenderTarget.Size.Y));
         }
 
         var dl = ImGui.GetWindowDrawList();

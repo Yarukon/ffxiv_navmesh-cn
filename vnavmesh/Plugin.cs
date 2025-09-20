@@ -4,7 +4,7 @@ using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Render;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Navmesh.Movement;
 using System;
 using System.Collections.Concurrent;

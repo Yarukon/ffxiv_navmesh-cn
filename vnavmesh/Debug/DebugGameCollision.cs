@@ -1,11 +1,11 @@
-﻿using Dalamud.Hooking;
+using Dalamud.Hooking;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using FFXIVClientStructs.FFXIV.Client.LayoutEngine;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision.Math;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Navmesh.Render;
 using System;
 using System.Collections.Generic;
@@ -352,7 +352,7 @@ public unsafe class DebugGameCollision : IDisposable
                 color = 0xff0000ff;
         }
         using var n = _tree.Node($"{type} {(nint)coll:X}, layers={coll->LayerMask:X8}, layout-id={coll->LayoutObjectId:X16}, refs={coll->NumRefs}, material={coll->ObjectMaterialValue:X}/{coll->ObjectMaterialMask:X}, flags={flagsText}###{(nint)coll:X}", false, color);
-        if (ImGui.BeginPopupContextItem())
+        if (ImGui.BeginPopupContextItem($"coll_{(nint)coll}"))
         {
             ContextCollider(coll);
             ImGui.EndPopup();

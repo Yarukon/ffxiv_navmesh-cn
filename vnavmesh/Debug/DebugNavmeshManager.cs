@@ -1,7 +1,7 @@
-﻿using System;
+using System;
 using System.Numerics;
 using Dalamud.Interface.Utility.Raii;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Navmesh.Movement;
 using Navmesh.NavVolume;
 using Navmesh.Utilities;

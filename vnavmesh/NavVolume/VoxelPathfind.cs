@@ -1,3 +1,6 @@
+using FFXIVClientStructs.FFXIV.Client.Game.Control;
+using FFXIVClientStructs.FFXIV.Client.System.Framework;
+using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -20,6 +23,8 @@ public class VoxelPathfind(VoxelMap volume)
     private          bool                   UseRaycast;
 
     public static float CurRandomFactor { get; set; }
+
+    private static Vector3 CurStartPos { get; set; } = new();
     
     private const bool  AllowReopen    = false; // this is extremely expensive and doesn't seem to actually improve the result
     private const float RaycastLimitSq = float.MaxValue;
@@ -29,12 +34,14 @@ public class VoxelPathfind(VoxelMap volume)
     public Span<Node> NodeSpan =>
         CollectionsMarshal.AsSpan(Nodes);
 
-    private readonly Vector3 CharaHalfExtents = new(5f, 5f, 5f);
+    private readonly Vector3 CharaHalfExtents = new(2f, 2f, 2f);
 
     public List<(ulong voxel, Vector3 p)> FindPath(
         ulong fromVoxel, ulong toVoxel, Vector3 fromPos, Vector3 toPos, bool useRaycast, bool returnIntermediatePoints, 
         Action<float>? progressCallback, CancellationToken cancel)
     {
+        CurStartPos = fromPos;
+
         UseRaycast = useRaycast;
         GenerateRandomThisTime();
         Start(fromVoxel, toVoxel, fromPos, toPos);
@@ -66,37 +73,94 @@ public class VoxelPathfind(VoxelMap volume)
         return rawPath;
     }
 
+    public unsafe static delegate* unmanaged<BGCollisionModule*, RaycastHit*, Vector4*, Vector3*, float, int, int*, bool> _SweepSphereMaterialFilter => (delegate* unmanaged<BGCollisionModule*, RaycastHit*, Vector4*, Vector3*, float, int, int*, bool>)BGCollisionModule.Addresses.SweepSphereMaterialFilter.Value;
+
+    public unsafe static bool SweepSphereMaterialFilter(Vector4 origin, Vector3 direction, out RaycastHit hitInfo, float maxDistance = 1000000f)
+    {
+        var framework = Framework.Instance();
+        if (framework == null)
+        {
+            hitInfo = default;
+            return false;
+        }
+        var bgCollisionModule = framework->BGCollisionModule;
+        if (bgCollisionModule == null)
+        {
+            hitInfo = default;
+            return false;
+        }
+        var flags = stackalloc int[] { 0x4000, 0, 0x4000, 0 };
+        var hit = new RaycastHit();
+        var result = _SweepSphereMaterialFilter(bgCollisionModule, &hit, &origin, &direction, maxDistance, 1, flags);
+        hitInfo = hit;
+        return result;
+    }
+
     public List<Vector3> AdjustPathForClearance(List<(ulong voxel, Vector3 p)> rawPath, Vector3 characterHalfExtents)
     {
-        if (rawPath.Count < 2)
+        if (rawPath.Count <= 2)
             return [.. rawPath.Select(node => node.p)];
 
-        // --- 参数定义 (保持不变) ---
-        const float MaxAngleDegrees = 65.0f;
-        const float MaxAngleRadians = MaxAngleDegrees * (float)(Math.PI / 180.0);
-        const float MaxClimbAngDeg = 45.0f;
-        const float MaxClimbAngRad = MaxClimbAngDeg * (float)(Math.PI / 180.0);
-        const float InterpolationStepSize = 8f;
-
-        // 新增的智能调整参数
-        const float SmoothnessFactor = 0.6f; // 平滑力的强度 (0 to 1)
-        const float CenteringFactor = 0.8f; // 居中力的强度 (0 to 1)
+        const float ProbeStepSize = 3f; // 在原始路径上放置探针的密度
+        const float MaxAngleRadians = 65.0f * (float)(Math.PI / 180.0);
 
         // ==================================================================
-        // ---- PASS 1: 路径简化 (String Pulling) ----
-        // 从原始路径中提取出最关键的拐点，不进行任何位置调整。
+        // ---- PASS 1: 生成高精度中心路径 (Generate Centered High-Res Path) ----
+        // 这是最关键的新增步骤
         // ==================================================================
-        var keyWaypoints = new List<Vector3>();
-        keyWaypoints.Add(rawPath[0].p); // 添加起点
+        var centeredHighResPath = new List<Vector3>
+        {
+            rawPath[0].p
+        };
 
+        for (int i = 0; i < rawPath.Count - 1; i++)
+        {
+            var startNode = rawPath[i];
+            var endNode = rawPath[i + 1];
+            var segment = endNode.p - startNode.p;
+            float distance = segment.Length();
+
+            if (distance < 0.1f) continue;
+
+            var segmentDirection = Vector3.Normalize(segment);
+
+            // 在原始路径段上插值生成探针点
+            for (float traveled = ProbeStepSize; traveled < distance; traveled += ProbeStepSize)
+            {
+                var probePoint = startNode.p + (segment * (traveled / distance));
+                // 对每个探针点进行置中，并使用前一个已置中的点作为参考
+                var centeredProbe = ProcessPoint(probePoint, centeredHighResPath[^1], segmentDirection, MaxAngleRadians, characterHalfExtents);
+                centeredHighResPath.Add(centeredProbe);
+            }
+
+            // 处理段的终点
+            var lastCenteredPoint = ProcessPoint(endNode.p, centeredHighResPath[^1], segmentDirection, MaxAngleRadians, characterHalfExtents);
+            centeredHighResPath.Add(lastCenteredPoint);
+        }
+
+        // ==================================================================
+        // ---- PASS 2: 简化中心路径 (String Pulling on Centered Path) ----
+        // ==================================================================
+        if (centeredHighResPath.Count < 2)
+        {
+            return [rawPath[0].p, rawPath[^1].p];
+        }
+
+        centeredHighResPath[0] = rawPath[0].p;
+        centeredHighResPath[^1] = rawPath[^1].p;
+
+        var keyWaypoints = new List<Vector3>
+        {
+            centeredHighResPath[0] // 添加起点
+        };
         int currentIndex = 0;
-        while (currentIndex < rawPath.Count - 1)
+        while (currentIndex < centeredHighResPath.Count - 1)
         {
             int furthestVisibleIndex = currentIndex + 1;
-            for (int j = currentIndex + 2; j < rawPath.Count; j++)
+            for (int j = currentIndex + 2; j < centeredHighResPath.Count; j++)
             {
-                // 使用您现有的安全检查，从当前拐点看向上一个成功连接的点
-                if (IsPathSegmentSafe(keyWaypoints[^1], rawPath[j].p, characterHalfExtents, MaxAngleRadians))
+                // 在已经置中过的路径上进行安全检查
+                if (IsPathSegmentSafe(keyWaypoints[^1], centeredHighResPath[j], characterHalfExtents, MaxAngleRadians))
                 {
                     furthestVisibleIndex = j;
                 }
@@ -105,112 +169,67 @@ public class VoxelPathfind(VoxelMap volume)
                     break;
                 }
             }
-            keyWaypoints.Add(rawPath[furthestVisibleIndex].p);
+            keyWaypoints.Add(centeredHighResPath[furthestVisibleIndex]);
             currentIndex = furthestVisibleIndex;
         }
 
-        // 如果最后一个点没有被包含，确保添加它
+        // 确保终点被添加
         if (keyWaypoints[^1] != rawPath[^1].p)
         {
-            keyWaypoints.Add(rawPath[^1].p);
-        }
-
-        // ==================================================================
-        // ---- PASS 2: 智能调整关键拐点 (Smart Adjustment) ----
-        // 对简化的拐点列表进行处理，融合平滑和居中。
-        // ==================================================================
-        if (keyWaypoints.Count < 3)
-        {
-            // 路径太短，无法进行平滑调整，直接进入最终生成阶段
-            return GenerateFinalPath(keyWaypoints, InterpolationStepSize);
-        }
-
-        var adjustedWaypoints = new List<Vector3>(new Vector3[keyWaypoints.Count]);
-        adjustedWaypoints[0] = keyWaypoints[0]; // 起点不变
-        adjustedWaypoints[^1] = keyWaypoints[^1]; // 终点暂时不变，最后特殊处理
-
-        // --- 特殊处理第一个拐点 (P1) ---
-        // 这里可以插入您原来对 P1 的前瞻性修正逻辑，以确保平稳起步
-        // (为简化，此处使用标准调整，但您可以将原逻辑放在这里)
-        adjustedWaypoints[1] = ProcessPoint(keyWaypoints[1], adjustedWaypoints[0], MaxClimbAngRad, characterHalfExtents);
-
-        // --- 循环调整中间的拐点 ---
-        for (int i = 2; i < keyWaypoints.Count - 1; i++)
-        {
-            var prevAdjusted = adjustedWaypoints[i - 1];
-            var currentOriginal = keyWaypoints[i];
-            var nextOriginal = keyWaypoints[i + 1];
-
-            // 1. 计算“平滑”目标点 (几何中心)
-            var smoothTarget = prevAdjusted + (nextOriginal - prevAdjusted) * 0.5f;
-
-            // 2. 计算“居中”目标点 (使用您强大的ProcessPoint)
-            var centerTarget = ProcessPoint(currentOriginal, prevAdjusted, MaxAngleRadians, characterHalfExtents);
-
-            // 3. 融合两个目标
-            // 从原始点开始，向“平滑”和“居中”的混合目标移动
-            var blendedTarget = Vector3.Lerp(smoothTarget, centerTarget, CenteringFactor);
-            var candidatePoint = Vector3.Lerp(currentOriginal, blendedTarget, SmoothnessFactor);
-
-            // 4. 安全校验
-            if (IsPathSegmentSafe(prevAdjusted, candidatePoint, characterHalfExtents, MaxAngleRadians))
+            // 检查最后一个关键路点和最终目标点之间是否安全
+            if (IsPathSegmentSafe(keyWaypoints[^1], rawPath[^1].p, characterHalfExtents, MaxAngleRadians))
             {
-                adjustedWaypoints[i] = candidatePoint;
-            }
-            else // 如果融合点不安全，退而求其次使用更可靠的居中点
-            {
-                if (IsPathSegmentSafe(prevAdjusted, centerTarget, characterHalfExtents, MaxAngleRadians))
-                {
-                    adjustedWaypoints[i] = centerTarget;
-                }
-                else // 如果两者都失败，保留原始拐点
-                {
-                    adjustedWaypoints[i] = currentOriginal;
-                }
+                keyWaypoints.Add(rawPath[^1].p);
             }
         }
 
-        // ==================================================================
-        // ---- PASS 3: 生成高分辨率最终路径 (Final Generation) ----
-        // 在调整好的、平滑的拐点之间进行插值。
-        // ==================================================================
-        return GenerateFinalPath(adjustedWaypoints, InterpolationStepSize);
+        // 路径平滑
+        var smoothedWaypoints = SmoothPathChaikin(keyWaypoints, 2, .1f);
+
+        return smoothedWaypoints;
     }
 
-    private List<Vector3> GenerateFinalPath(List<Vector3> adjustedWaypoints, float stepSize)
+    public static List<Vector3> SmoothPathChaikin(List<Vector3> path, int iterations = 1, float smoothingFactor = 0.2f)
     {
-        var finalPath = new List<Vector3>();
-        if (adjustedWaypoints.Count < 2) return adjustedWaypoints;
-
-        finalPath.Add(adjustedWaypoints[0]);
-
-        for (int i = 0; i < adjustedWaypoints.Count - 1; i++)
+        if (path.Count < 3 || iterations < 1)
         {
-            Vector3 startPoint = adjustedWaypoints[i];
-            Vector3 endPoint = adjustedWaypoints[i + 1];
-
-            var segmentVector = endPoint - startPoint;
-            float segmentLength = segmentVector.Length();
-            if (segmentLength < 0.1f) continue;
-
-            int numSteps = (int)(segmentLength / stepSize);
-            if (numSteps == 0) numSteps = 1;
-
-            for (int j = 1; j <= numSteps; j++)
-            {
-                float t = (float)j / numSteps;
-                finalPath.Add(Vector3.Lerp(startPoint, endPoint, t));
-            }
+            return path;
         }
-        return finalPath;
+
+        // 确保因子在 (0, 0.5) 范围内，通常用 0.25
+        float p1Factor = Math.Clamp(smoothingFactor, 0.01f, 0.49f);
+        float p2Factor = 1.0f - p1Factor;
+
+        for (int i = 0; i < iterations; i++)
+        {
+            var smoothedPath = new List<Vector3> { path[0] }; // 保留原始起点
+
+            for (int j = 0; j < path.Count - 1; j++)
+            {
+                Vector3 p0 = path[j];
+                Vector3 p1 = path[j + 1];
+
+                // 在原线段的 25% 和 75% 处创建新点
+                Vector3 newPoint1 = Vector3.Lerp(p0, p1, p1Factor);
+                Vector3 newPoint2 = Vector3.Lerp(p0, p1, p2Factor);
+
+                smoothedPath.Add(newPoint1);
+                smoothedPath.Add(newPoint2);
+            }
+
+            smoothedPath.Add(path[^1]); // 保留原始终点
+            path = smoothedPath; // 将平滑后的路径作为下一次迭代的输入
+        }
+
+        return path;
     }
 
     /// <summary>
     /// 处理单个路径点：进行垂直调整、角度限制和最终安全检查。
     /// </summary>
-    private Vector3 ProcessPoint(Vector3 currentPoint, Vector3 previousPoint, float maxAngleRadians, Vector3 characterHalfExtents)
+    private Vector3 ProcessPoint(Vector3 currentPoint, Vector3 previousPoint, Vector3 pathDirection, float maxAngleRadians, Vector3 characterHalfExtents)
     {
-        // 1. 坡度限制 (与之前相同)
+        // 坡度限制
         var delta = currentPoint - previousPoint;
         var horizontalDist = new Vector2(delta.X, delta.Z).Length();
         if (horizontalDist > 0.01f)
@@ -223,191 +242,153 @@ public class VoxelPathfind(VoxelMap volume)
             }
         }
 
-        var finalPoint = Find3DCenter(Volume, currentPoint, characterHalfExtents);
-        return finalPoint;
+        // --- 2. 找到水平中心 ---
+        // 使用经过坡度修正的点作为输入
+        Vector3 horizontallyCenteredPos = FindChannelCenter(currentPoint, pathDirection, characterHalfExtents);
+
+        // --- 3. 受限的垂直搜索 (核心修正) ---
+        float sweepRadius = Math.Max(characterHalfExtents.X, characterHalfExtents.Z);
+        // 定义一个严格的垂直搜索范围，这是防止“掉下悬崖”的关键
+        const float verticalSearchRange = 3.0f;
+
+        // 从我们坡度安全的Y坐标稍高一点的位置开始向下搜索
+        Vector3 downProbeOrigin = new Vector3(
+            horizontallyCenteredPos.X,
+            currentPoint.Y + characterHalfExtents.Y, // 使用坡度修正后的Y值！
+            horizontallyCenteredPos.Z
+        );
+
+        bool usePhysics = IsInPhysicsRange(downProbeOrigin);
+        bool groundFound = false;
+        Vector3 groundHitPoint = Vector3.Zero;
+
+        if (usePhysics)
+        {
+            // --- 原始逻辑: 使用精确的物理扫描 ---
+            Vector4 sweepOrigin = new Vector4(downProbeOrigin, sweepRadius);
+            if (SweepSphereMaterialFilter(sweepOrigin, -Vector3.UnitY, out RaycastHit groundHit, verticalSearchRange))
+            {
+                groundFound = true;
+                groundHitPoint = groundHit.Point;
+            }
+        }
+        else
+        {
+            // --- 新逻辑: 使用体素扫描 ---
+            if (VoxelSweepSphere(Volume, downProbeOrigin, -Vector3.UnitY, sweepRadius, verticalSearchRange, out Vector3 voxelHitPoint))
+            {
+                groundFound = true;
+                // 对于向下的扫描，我们关心的是Y坐标。体素扫描返回的球心Y值可以近似作为地面位置。
+                groundHitPoint = voxelHitPoint;
+            }
+        }
+
+        // --- 根据探测结果决定最终位置 (逻辑不变) ---
+        if (groundFound)
+        {
+            return new Vector3(horizontallyCenteredPos.X, groundHitPoint.Y + characterHalfExtents.Y, horizontallyCenteredPos.Z);
+        }
+        else
+        {
+            // Fallback: 附近没有找到地面
+            return horizontallyCenteredPos;
+        }
     }
 
-    private static readonly Vector3[] HorizontalProbeDirs = new Vector3[]
-    {
+    private static readonly Vector3[] HorizontalProbeDirs = [
         new Vector3(1, 0, 0), new Vector3(-1, 0, 0),
         new Vector3(0, 0, 1), new Vector3(0, 0, -1),
         Vector3.Normalize(new Vector3(1, 0, 1)), Vector3.Normalize(new Vector3(1, 0, -1)),
         Vector3.Normalize(new Vector3(-1, 0, 1)), Vector3.Normalize(new Vector3(-1, 0, -1))
-    };
+    ];
 
-    private Vector3 Find3DCenter(VoxelMap volume, Vector3 position, Vector3 characterHalfExtents, float maxProbeDistance = 5f, float verticalBias = 0.5f)
+    private Vector3 FindChannelCenter(Vector3 position, Vector3 pathDirection, Vector3 characterHalfExtents, float maxProbeDistance = 10f)
     {
-        // --- 步骤 1: 计算水平中心 (XZ平面质心) ---
-        var boundaryPoints = new List<Vector3>();
-        Vector3 horizontalCentroid = new Vector3(position.X, 0, position.Z); // 初始值
+        bool usePhysics = IsInPhysicsRange(position);
 
-        foreach (var dir in HorizontalProbeDirs)
-        {
-            float dist = ProbeDistance(volume, position, dir, maxProbeDistance, characterHalfExtents);
-            boundaryPoints.Add(position + dir * dist);
-        }
+        // 1. 计算与路径方向垂直的“右”方向 (只考虑水平面)
+        Vector3 rightDir = Vector3.Normalize(new Vector3(pathDirection.Z, 0, -pathDirection.X));
+        Vector3 leftDir = -rightDir;
 
-        if (boundaryPoints.Count > 0)
+        float sweepRadius = Math.Max(characterHalfExtents.X, characterHalfExtents.Z);
+        Vector3 rightHitPoint = position + rightDir * maxProbeDistance; // 默认值
+        Vector3 leftHitPoint = position + leftDir * maxProbeDistance;  // 默认值
+        bool rightHit = false;
+        bool leftHit = false;
+
+        // 2.向右探测
+        if (usePhysics)
         {
-            float totalX = 0, totalZ = 0;
-            foreach (var p in boundaryPoints)
+            // --- 原始逻辑: 使用精确的物理扫描 ---
+            Vector4 sweepOrigin = new Vector4(position, sweepRadius);
+            if (SweepSphereMaterialFilter(sweepOrigin, rightDir, out RaycastHit hitInfoRight, maxProbeDistance))
             {
-                totalX += p.X;
-                totalZ += p.Z;
+                rightHitPoint = hitInfoRight.Point;
+                rightHit = true;
             }
-            horizontalCentroid = new Vector3(totalX / boundaryPoints.Count, 0, totalZ / boundaryPoints.Count);
-        }
-
-        // --- 步骤 2: 可靠地计算垂直空间 (Y轴) ---
-
-        // 使用新的、可靠的方法找到脚下的地面
-        float groundY = FindGroundY(volume, position.X, position.Z, position.Y);
-
-        // 向上探测天花板 (这个逻辑通常是可靠的，可以保留)
-        float distY_pos = ProbeDistance(volume, position, Vector3.UnitY, maxProbeDistance, characterHalfExtents);
-        float ceilingY = position.Y + distY_pos;
-
-        // 如果没有找到地面，这是一个异常情况，我们必须保守处理
-        if (groundY == float.MinValue)
-        {
-            // 无法确定地面，最安全的做法是保持原始Y坐标不变
-            return new Vector3(horizontalCentroid.X, position.Y, horizontalCentroid.Z);
-        }
-
-        // 计算目标Y值
-        float targetY;
-        float verticalSpace = ceilingY - groundY;
-        float characterHeight = characterHalfExtents.Y * 2;
-
-        if (verticalSpace > characterHeight * 1.1f) // 确保有足够空间
-        {
-            // 将角色的脚底板放在地面上，然后根据bias在剩余空间里上浮
-            float availableSpace = verticalSpace - characterHeight;
-            targetY = groundY + characterHalfExtents.Y + (availableSpace * Math.Clamp(verticalBias, 0.0f, 1.0f));
         }
         else
         {
-            // 空间狭小，取正中
-            targetY = groundY + verticalSpace / 2.0f;
-        }
-
-        // --- 步骤 3: 组合成最佳猜测点 ---
-        Vector3 optimalPosition = new Vector3(horizontalCentroid.X, targetY, horizontalCentroid.Z);
-
-        // --- 步骤 4: 最终安全校验和“地平线”安全钳 ---
-        // 即使所有计算都正确，我们也要做最后一道保险
-
-        // 重新在最终的水平位置下方查找地面
-        float finalGroundY = FindGroundY(volume, optimalPosition.X, optimalPosition.Z, optimalPosition.Y + characterHalfExtents.Y);
-
-        if (finalGroundY != float.MinValue)
-        {
-            // 【安全钳】确保角色的脚底板不会低于最终找到的地面
-            float minimumAllowedY = finalGroundY + characterHalfExtents.Y;
-            if (optimalPosition.Y < minimumAllowedY)
+            // --- 新逻辑: 使用体素扫描 ---
+            if (VoxelSweepSphere(Volume, position, rightDir, sweepRadius, maxProbeDistance, out Vector3 voxelHitPoint))
             {
-                optimalPosition.Y = minimumAllowedY;
+                // 注意：体素扫描返回的是球体中心的位置，这对于计算已经足够精确
+                rightHitPoint = voxelHitPoint;
+                rightHit = true;
             }
         }
 
-        // 检查最终位置是否在实体内（作为最后的防线）
-        if (VoxelSearch.FindNearestEmptyVoxel(volume, optimalPosition, characterHalfExtents) == VoxelMap.InvalidVoxel)
+        // 3. 向左探测
+        if (usePhysics)
         {
-            // 如果还是失败了，返回原始位置是最安全的选择
-            return position;
-        }
-
-        return optimalPosition;
-    }
-
-    /// <summary>
-    /// 辅助函数：沿一个方向探测到第一个非空体素的距离。
-    /// </summary>
-    private float ProbeDistance(VoxelMap volume, Vector3 startPos, Vector3 direction, float maxDistance, Vector3 characterHalfExtents)
-    {
-        // 使用一个比角色尺寸稍小的步长，以确保不会跳过薄墙
-        float step = Math.Min(characterHalfExtents.X, characterHalfExtents.Z) * 0.9f;
-        if (step < 0.1f) step = 0.1f;
-
-        Vector3 previousProbePos = startPos;
-
-        for (float d = step; d <= maxDistance; d += step)
-        {
-            var currentProbePos = startPos + (direction * d);
-
-            // 检查从上一个探测点到当前探测点的“厚”线段是否安全
-            if (!IsThickSegmentSafe(previousProbePos, currentProbePos, characterHalfExtents))
+            // --- 原始逻辑: 使用精确的物理扫描 ---
+            Vector4 sweepOrigin = new Vector4(position, sweepRadius);
+            if (SweepSphereMaterialFilter(sweepOrigin, leftDir, out RaycastHit hitInfoLeft, maxProbeDistance))
             {
-                // 在 (d - step) 和 d 之间发生了碰撞。
-                // 为简单起见，我们返回上一个安全点的距离。
-                // 一个更精确的方法是在这个小段内进行二分搜索，但通常没有必要。
-                return d - step;
+                leftHitPoint = hitInfoLeft.Point;
+                leftHit = true;
             }
-
-            previousProbePos = currentProbePos;
-        }
-
-        return maxDistance; // 整个探测距离内都没有障碍物
-    }
-
-    /// <summary>
-    /// 【新辅助函数】检查一个短的直线段对于角色体积是否安全。
-    /// 它通过在角色横截面的关键点上投射平行的 LineOfSight 射线来实现。
-    /// </summary>
-    /// <returns>如果整个体积都能安全通过，则返回 true。</returns>
-    private bool IsThickSegmentSafe(Vector3 segmentStart, Vector3 segmentEnd, Vector3 characterHalfExtents)
-    {
-        var direction = segmentEnd - segmentStart;
-        if (direction.LengthSquared() < 0.01f) return true; // Segment is too short to check
-
-        // 计算与移动方向垂直的 "right" 和 "up" 向量，以定义角色的横截面
-        Vector3 right, up;
-        if (Math.Abs(Vector3.Dot(Vector3.Normalize(direction), Vector3.UnitY)) > 0.99f)
-        {
-            // 如果移动方向几乎是垂直的，使用 Forward 向量作为参考
-            right = Vector3.Normalize(Vector3.Cross(direction, Vector3.UnitZ));
-            up = Vector3.Normalize(Vector3.Cross(right, direction));
         }
         else
         {
-            // 标准情况
-            right = Vector3.Normalize(Vector3.Cross(direction, Vector3.UnitY));
-            up = Vector3.Normalize(Vector3.Cross(right, direction));
-        }
-
-        // 定义角色横截面的5个关键检查点偏移
-        var offsets = new Vector3[]
-        {
-        Vector3.Zero, // Center
-        (right * characterHalfExtents.X) + (up * characterHalfExtents.Y),   // Top-Right
-        (right * characterHalfExtents.X) - (up * characterHalfExtents.Y),   // Bottom-Right
-        (-right * characterHalfExtents.X) - (up * characterHalfExtents.Y),  // Bottom-Left
-        (-right * characterHalfExtents.X) + (up * characterHalfExtents.Y)   // Top-Left
-        };
-
-        // 对每个关键点都进行一次 LineOfSight 检查
-        foreach (var offset in offsets)
-        {
-            var fromPos = segmentStart + offset;
-            var toPos = segmentEnd + offset;
-
-            // 同样，需要一个精确的 GetVoxelIDAt 函数
-            ulong fromVoxel = VoxelSearch.FindNearestEmptyVoxel(Volume, fromPos, characterHalfExtents);
-            ulong toVoxel = VoxelSearch.FindNearestEmptyVoxel(Volume, toPos, characterHalfExtents);
-
-            if (fromVoxel == VoxelMap.InvalidVoxel || toVoxel == VoxelMap.InvalidVoxel)
+            // --- 新逻辑: 使用体素扫描 ---
+            if (VoxelSweepSphere(Volume, position, leftDir, sweepRadius, maxProbeDistance, out Vector3 voxelHitPoint))
             {
-                return false; // 偏移点在地图外
-            }
-
-            if (!VoxelSearch.LineOfSight(Volume, fromVoxel, toVoxel, fromPos, toPos))
-            {
-                return false; // 只要有一个角的路径被挡住，整个段就不安全
+                leftHitPoint = voxelHitPoint;
+                leftHit = true;
             }
         }
 
-        return true; // 所有射线的路径都畅通无阻
+        Vector3 centeredPosition;
+
+        // 4. 根据探测结果计算中心点
+        if (rightHit && leftHit)
+        {
+            // 两边都碰到墙，完美情况，取中点
+            centeredPosition = (rightHitPoint + leftHitPoint) * 0.5f;
+        }
+        else if (rightHit)
+        {
+            // 只碰到右边的墙，从右墙向左推一个角色宽度
+            centeredPosition = rightHitPoint + leftDir * characterHalfExtents.X; // 假设X是宽度
+        }
+        else if (leftHit)
+        {
+            // 只碰到左边的墙，从左墙向右推一个角色宽度
+            centeredPosition = leftHitPoint + rightDir * characterHalfExtents.X;
+        }
+        else
+        {
+            // 两边都是开阔地，保持原位
+            centeredPosition = position;
+        }
+
+        // 关键：只修改水平位置，保留原始的Y坐标
+        centeredPosition.Y = position.Y;
+        return centeredPosition;
     }
+
+    private const float PHYSICS_RELIABLE_DISTANCE = 100.0f;
 
     /// <summary>
     /// 检查从 fromPoint 到 toPoint 的直线路径是否对角色来说是安全的。
@@ -415,160 +396,217 @@ public class VoxelPathfind(VoxelMap volume)
     /// </summary>
     private bool IsPathSegmentSafe(Vector3 fromPoint, Vector3 toPoint, Vector3 characterHalfExtents, float maxSlopeAngleRadians, float requiredClearance = 5.0f)
     {
-        // 步骤1: 将世界坐标转换为体素ID
-        ulong fromVoxel = VoxelSearch.FindNearestEmptyVoxel(Volume, fromPoint, characterHalfExtents);
-        ulong toVoxel = VoxelSearch.FindNearestEmptyVoxel(Volume, toPoint, characterHalfExtents);
+        var segment = toPoint - fromPoint;
+        float distance = segment.Length();
 
-        // 如果起点或终点在地图外或无效，则路径不安全
-        if (fromVoxel == VoxelMap.InvalidVoxel || toVoxel == VoxelMap.InvalidVoxel)
+        // 如果距离太近，可以认为路径是安全的，避免除零等问题
+        if (distance < 0.01f)
         {
-            return false;
+            return true;
         }
 
-        var voxelsOnPath = VoxelSearch.EnumerateVoxelsInLinePooled(Volume, fromVoxel, toVoxel, fromPoint, toPoint);
-
-        Vector3? previousVoxelCenter = null;
-        var clearanceCheckHalfExtents = characterHalfExtents + new Vector3(requiredClearance);
-
-        // 步骤3: 遍历路径上的每个体素并进行检查
-        foreach (var (voxelId, t, isEmpty) in voxelsOnPath)
+        // --- 1. 检查整体坡度 (依然重要) ---
+        // 物理扫描无法判断坡度是否适合角色行走，所以这个检查必须保留。
+        var horizontalDist = new Vector2(segment.X, segment.Z).Length();
+        if (horizontalDist > 0.01f)
         {
-            // 检查A: 体素本身是否是实体？
-            // EnumerateVoxelsInLine 直接告诉我们体素是否为空，这是一个很好的快速失败路径。
-            if (!isEmpty)
+            var slopeAngle = MathF.Atan(Math.Abs(segment.Y) / horizontalDist);
+            if (slopeAngle > maxSlopeAngleRadians)
             {
-                return false; // 路径直接穿过了一个实体方块
-            }
-
-            // 获取当前体素的中心点，用于更精确的检查
-            // 同样，假设你有这个辅助函数
-            Vector3 currentVoxelCenter = Volume.GetVoxelCenter(voxelId);
-
-            // 检查B: 周围是否有足够的安全空间？
-            // 这个检查比检查A更严格，因为它要求体素周围有额外的clearance。
-            if (VoxelSearch.FindNearestEmptyVoxel(Volume, currentVoxelCenter, clearanceCheckHalfExtents) == VoxelMap.InvalidVoxel)
-            {
-                // 路径点周围空间不足
+                // 整个路径段对于角色来说太陡峭了
                 return false;
             }
+        }
 
-            // 检查C: 局部坡度是否过大？
-            if (previousVoxelCenter.HasValue)
+        // --- 2. 检查物理遮挡 (核心) ---
+        // 使用 SweepSphereMaterialFilter 来检查角色体积是否会与障碍物碰撞。
+        if (distance <= PHYSICS_RELIABLE_DISTANCE)
+        {
+            // --- 近距离：使用精确的物理扫描 ---
+            float sweepRadius = Math.Max(characterHalfExtents.X, Math.Max(characterHalfExtents.Y, characterHalfExtents.Z));
+            Vector4 sweepOrigin = new Vector4(fromPoint, sweepRadius);
+            Vector3 direction = segment / distance;
+            bool hitSomething = SweepSphereMaterialFilter(sweepOrigin, direction, out _, distance);
+            return !hitSomething;
+        }
+        else
+        {
+            // --- 远距离：回退到我们新创建的、带体积的体素检查 ---
+            return IsPathSegmentSafeWithVoxelVolume(Volume, fromPoint, toPoint, characterHalfExtents);
+        }
+    }
+
+    /// <summary>
+    /// 检查以 centerVoxelId 为中心的、指定半径范围内的所有体素是否都为空。
+    /// 这个版本专为您的 VoxelMap API 设计。
+    /// </summary>
+    /// <param name="volume">体素地图</param>
+    /// <param name="centerVoxelId">要检查的中心体素ID</param>
+    /// <param name="radiusInVoxels">检查半径（以最精细的体素为单位）</param>
+    /// <returns>如果区域内所有体素都为空，则返回 true</returns>
+    private bool IsVoxelNeighborhoodEmpty(VoxelMap volume, ulong centerVoxelId, int radiusInVoxels)
+    {
+        // 如果半径为0或更小，我们不需要检查邻居，只需检查中心点。
+        // 但调用此函数的前提是中心点已经检查过了，所以可以直接返回true。
+        if (radiusInVoxels <= 0)
+        {
+            return true;
+        }
+
+        // 1. 获取最精细层级（L2）的体素大小。这是我们计算偏移量的单位。
+        //    假设 Levels[2] 是最精细的层级。
+        float leafVoxelSize = volume.Levels[2].CellSize.X; // 假设体素是立方体
+
+        // 2. 获取中心体素的世界坐标包围盒，以此作为计算的“锚点”。
+        var (vmin, vmax) = volume.VoxelBounds(centerVoxelId, 0);
+        var centerWorldPos = (vmin + vmax) * 0.5f;
+
+        // 3. 在体素空间中，遍历以中心点为原点的、边长为 (2*radius+1) 的立方体。
+        for (int dz = -radiusInVoxels; dz <= radiusInVoxels; dz++)
+        {
+            for (int dy = -radiusInVoxels; dy <= radiusInVoxels; dy++)
             {
-                var step = currentVoxelCenter - previousVoxelCenter.Value;
-                var horizontalDist = new Vector2(step.X, step.Z).Length();
-                if (horizontalDist > 0.01f)
+                for (int dx = -radiusInVoxels; dx <= radiusInVoxels; dx++)
                 {
-                    var slopeAngle = MathF.Atan(Math.Abs(step.Y) / horizontalDist);
-                    if (slopeAngle > maxSlopeAngleRadians)
+                    // 跳过中心点本身，因为它已经在主循环中检查过了
+                    if (dx == 0 && dy == 0 && dz == 0)
                     {
-                        return false; // 路径中有过于陡峭的台阶
+                        continue;
+                    }
+
+                    // 4. 计算邻居体素中心点的近似世界坐标。
+                    var offset = new Vector3(dx, dy, dz) * leafVoxelSize;
+                    var neighborWorldPos = centerWorldPos + offset;
+
+                    // 5. 使用 FindLeafVoxel 检查这个世界坐标位置的体素状态。
+                    //    这是最可靠的方法，因为它利用了您系统内建的世界到体素的转换逻辑。
+                    var (_, neighborIsEmpty) = volume.FindLeafVoxel(neighborWorldPos);
+
+                    if (!neighborIsEmpty)
+                    {
+                        // 发现障碍物，路径不安全
+                        return false;
                     }
                 }
             }
-
-            previousVoxelCenter = currentVoxelCenter;
         }
 
+        // 遍历完所有邻居都没发现障碍物
         return true;
     }
 
     /// <summary>
-    /// 对一个由关键拐点组成的路径进行智能平滑和居中。
-    /// 此方法会同时考虑路径的几何平滑度和与环境的距离。
+    /// 使用体素数据检查一个带体积的路径段是否安全（为八叉树优化）。
     /// </summary>
-    /// <param name="path">要处理的路径，应只包含关键拐点。</param>
-    /// <param name="characterHalfExtents">角色体积。</param>
-    /// <param name="iterations">平滑迭代次数。推荐 3-5 次。</param>
-    /// <param name="smoothness">平滑力。每次迭代中，点向几何中心移动的比例。推荐 0.5。</param>
-    /// <param name="centeringBias">居中力。每次迭代中，点向安全中心移动的比例。推荐 0.1 - 0.3。</param>
-    public void SmartPostProcessPath(List<Vector3> path, Vector3 characterHalfExtents, int iterations = 4, float smoothness = 0.55f, float centeringBias = 0.3f)
+    private bool IsPathSegmentSafeWithVoxelVolume(VoxelMap volume, Vector3 fromPos, Vector3 toPos, Vector3 characterHalfExtents)
     {
-        if (path.Count < 3) return;
+        // 1. 计算检查半径（以最精细的体素为单位）
+        float characterRadius = Math.Max(characterHalfExtents.X, Math.Max(characterHalfExtents.Y, characterHalfExtents.Z));
+        float leafVoxelSize = volume.Levels[2].CellSize.X; // 假设体素是立方体
+        int radiusInVoxels = (int)Math.Ceiling(characterRadius / leafVoxelSize);
 
-        int pointCount = path.Count;
-        // 创建一个工作副本，以避免在迭代中读取和写入同一个列表时产生问题
-        var workingPath = new List<Vector3>(path);
+        // 2. 获取路径中心线上的所有体素
+        ulong fromVoxel = VoxelSearch.FindNearestEmptyVoxel(volume, fromPos, characterHalfExtents);
+        ulong toVoxel = VoxelSearch.FindNearestEmptyVoxel(volume, toPos, characterHalfExtents);
 
-        for (int iter = 0; iter < iterations; iter++)
+        List<(ulong voxel, float t, bool empty)> voxelsOnLine;
+        try
         {
-            // 每次迭代都基于上一次的结果
-            // 注意：我们不对起点和终点进行处理
-            for (int i = 1; i < pointCount - 1; i++)
+            voxelsOnLine = VoxelSearch.EnumerateVoxelsInLinePooled(volume, fromVoxel, toVoxel, fromPos, toPos);
+        }
+        catch (PathfindLoopException ex)
+        {
+            Service.Log.Debug($"远距离体素直线遍历失败: {ex.Message}");
+            return false; // 直线遍历失败，视为不安全
+        }
+
+        // 3. 遍历中心线上的每个体素，并使用我们新的辅助函数检查其体积
+        foreach (var (centerVoxelId, t, centerIsEmpty) in voxelsOnLine)
+        {
+            // 快速失败路径：如果中心线直接撞上非空体素，立即返回false
+            if (!centerIsEmpty)
             {
-                // --- 关键改进：使用已调整过的前一个点 ---
-                Vector3 prevPoint = workingPath[i - 1];
-                Vector3 currentPoint = workingPath[i];
-                Vector3 nextPoint = workingPath[i + 1];
+                return false;
+            }
 
-                // 1. 计算“平滑”目标点
-                // 这是纯粹的几何平滑，让当前点移动到前后邻居的连线中点
-                Vector3 smoothTarget = prevPoint + (nextPoint - prevPoint) * 0.5f;
-                Vector3 smoothedPoint = Vector3.Lerp(currentPoint, smoothTarget, smoothness);
-
-                // 2. 计算“居中”目标点
-                // 这是为了安全，将点推向局部空间的中心
-                // 注意：我们在平滑后的点上计算，以获得更相关的环境信息
-                Vector3 centerTarget = Find3DCenter(Volume, smoothedPoint, characterHalfExtents);
-
-                // 3. 融合两个目标
-                // 从平滑后的点，再向安全中心移动一点点
-                Vector3 finalPoint = Vector3.Lerp(smoothedPoint, centerTarget, centeringBias);
-
-                // 4. 安全校验 (可选但推荐)
-                // 这一步可以简化，因为迭代和较小的centeringBias通常能保证安全
-                if (VoxelSearch.FindNearestEmptyVoxel(Volume, finalPoint, characterHalfExtents) != VoxelMap.InvalidVoxel)
-                {
-                    workingPath[i] = finalPoint;
-                }
-                // 如果不安全，则在本次迭代中不移动该点，等待下一次迭代
+            // 对中心体素进行邻域体积检查
+            if (!IsVoxelNeighborhoodEmpty(volume, centerVoxelId, radiusInVoxels))
+            {
+                // 体积检查失败，意味着角色的边缘会碰到障碍物
+                return false;
             }
         }
 
-        // 将最终平滑的结果写回原始列表
-        for (int i = 0; i < pointCount; i++)
-        {
-            path[i] = workingPath[i];
-        }
+        // 所有检查都通过了，路径是安全的
+        return true;
     }
 
     /// <summary>
-    /// 【新增】从一个给定的水平位置(X,Z)开始，从上往下查找地面Y坐标。
-    /// 这是一个比 ProbeDistance 更可靠的地面查找方法。
+    /// 模拟 SweepSphere 的体素版本。沿着一个方向步进，检查每一步的体积。
     /// </summary>
-    /// <param name="volume">体素地图。</param>
-    /// <param name="x">世界坐标X。</param>
-    /// <param name="z">世界坐标Z。</param>
-    /// <param name="startY">从哪个高度开始向下搜索。</param>
-    /// <param name="searchDepth">最大向下搜索深度。</param>
-    /// <returns>地面的Y坐标。如果没找到，返回一个非常低的值。</returns>
-    private float FindGroundY(VoxelMap volume, float x, float z, float startY, float searchDepth = 10.0f)
+    /// <param name="volume">体素地图</param>
+    /// <param name="origin">扫描的起始世界坐标</param>
+    /// <param name="direction">扫描方向（应为单位向量）</param>
+    /// <param name="radius">扫描球体的半径</param>
+    /// <param name="maxDistance">最大扫描距离</param>
+    /// <param name="hitPoint">如果碰到障碍物，返回碰撞发生时球体中心的位置</param>
+    /// <returns>如果碰到非空体素，则为 true</returns>
+    private bool VoxelSweepSphere(VoxelMap volume, Vector3 origin, Vector3 direction, float radius, float maxDistance, out Vector3 hitPoint)
     {
-        // 假设体素大小为1.0f，你可以根据实际情况调整步长
-        const float step = 0.5f;
-        for (float y = startY; y > startY - searchDepth; y -= step)
+        float leafVoxelSize = volume.Levels[2].CellSize.X;
+        int radiusInVoxels = (int)Math.Ceiling(radius / leafVoxelSize);
+
+        // 我们以体素大小的一半作为步长，以确保不会跳过薄墙
+        float stepSize = leafVoxelSize * 0.5f;
+        int numSteps = (int)(maxDistance / stepSize);
+
+        for (int i = 1; i <= numSteps; i++) // 从第一步开始，避免立即检测起点
         {
-            // 假设你有一个函数可以检查世界坐标点是否在实体体素内
-            // 这个检查比体积检查更简单、更快速、更可靠
-            if (IsPositionInSolidVoxel(volume, new Vector3(x, y, z)))
+            Vector3 currentCenter = origin + direction * (i * stepSize);
+
+            // 1. 检查球体中心点所在的体素
+            var (centerVoxelId, centerIsEmpty) = volume.FindLeafVoxel(currentCenter);
+            if (!centerIsEmpty)
             {
-                // 找到了实体体素，地面就在这个体素的上方
-                // 假设体素中心在y，体素高度为1，那么上表面就是 y + 0.5
-                // 你需要根据你的体素坐标系进行调整
-                return y + step; // 返回碰撞点之上的位置作为地面
+                hitPoint = currentCenter;
+                return true; // 中心直接命中
+            }
+
+            // 2. 检查该点周围的体积
+            if (!IsVoxelNeighborhoodEmpty(volume, centerVoxelId, radiusInVoxels))
+            {
+                hitPoint = currentCenter; // 体积碰撞
+                return true;
             }
         }
-        // 如果在搜索深度内没有找到地面，返回一个安全但极低的值
-        return float.MinValue;
+
+        hitPoint = Vector3.Zero;
+        return false;
     }
 
-    // 你需要实现这个辅助函数，它可能依赖于你的VoxelMap结构
-    private bool IsPositionInSolidVoxel(VoxelMap volume, Vector3 pos)
+    private bool IsInPhysicsRange(Vector3 point)
     {
-        // 这是一个示例实现，你需要替换成你自己的逻辑
-        ulong voxelId = VoxelSearch.FindNearestEmptyVoxel(volume, pos, CharaHalfExtents); // 假设有这个函数
-        if (voxelId == VoxelMap.InvalidVoxel) return true; // 地图外视为固体
-        return !volume.IsEmpty(voxelId); // 假设有这个函数
+        return Vector3.Distance(point, CurStartPos) <= PHYSICS_RELIABLE_DISTANCE;
+    }
+
+    /// <summary>
+    /// 一个辅助结构体，用于非破坏性地解码一个 Voxel ulong ID。
+    /// </summary>
+    public readonly struct VoxelIDDecoder
+    {
+        public readonly ulong L0Index;
+        public readonly ulong L1Index;
+        public readonly ulong L2Index;
+
+        public VoxelIDDecoder(ulong voxelId)
+        {
+            // 复制 voxelId 以免破坏原始值
+            var tempVoxel = voxelId;
+            // 解码顺序根据 EnumerateNeighbours 的实现推断
+            L2Index = VoxelMap.DecodeIndex(ref tempVoxel);
+            L1Index = VoxelMap.DecodeIndex(ref tempVoxel);
+            L0Index = VoxelMap.DecodeIndex(ref tempVoxel);
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

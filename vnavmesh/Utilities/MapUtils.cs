@@ -14,9 +14,9 @@ public static class MapUtils
     private static unsafe Vector2? GetFlagPosition()
     {
         var map = AgentMap.Instance();
-        if (map == null || !map->IsFlagMarkerSet) return null;
+        if (map == null || map->FlagMarkerCount == 0) return null;
         
-        var marker = map->FlagMapMarker;
+        var marker = map->FlagMapMarkers[0];
         return new(marker.XFloat, marker.YFloat);
     }
 }
